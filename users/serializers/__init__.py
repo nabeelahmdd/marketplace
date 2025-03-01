@@ -11,3 +11,9 @@ from .otp_serializers import (
     OTPRegisterSerializer,
     OTPLoginSerializer,
 )
+
+from .social_auth_serializers import(
+    SocialLoginSerializer,
+    SocialAccountSerializer,
+    SocialAccountDisconnectSerializer
+)

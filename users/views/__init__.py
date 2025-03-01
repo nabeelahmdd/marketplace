@@ -11,3 +11,8 @@ from .otp_views import (
     OTPRegisterView,
     OTPLoginView
 )
+from .social_auth_views import (
+    SocialLoginView,
+    SocialAccountsView,
+    SocialAccountDisconnectView
+)

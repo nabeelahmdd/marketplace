@@ -1,0 +1,558 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Login</title>
+    {% block css %}
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .login-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 20px 0;
+        }
+
+        .divider::before, .divider::after {
+            content: "";
+            flex: 1;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .divider span {
+            padding: 0 10px;
+            color: #777;
+            font-size: 14px;
+        }
+
+        .social-login {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px 20px;
+            border-radius: 4px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .btn:active {
+            transform: scale(0.98);
+        }
+
+        .btn img {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+        }
+
+        /* Style for Google Sign-In button container */
+        #google-button-container {
+            height: 44px;
+            margin-bottom: 12px;
+        }
+
+        .btn-facebook {
+            background-color: #1877F2;
+            color: white;
+        }
+
+        .btn-facebook:hover {
+            background-color: #166fe5;
+        }
+
+        .btn-apple {
+            background-color: black;
+            color: white;
+        }
+
+        .btn-apple:hover {
+            background-color: #333;
+        }
+
+        .email-login {
+            margin-top: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #555;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+
+        .btn-primary {
+            background-color: #2196F3;
+            color: white;
+            width: 100%;
+            padding: 12px;
+            margin-top: 10px;
+        }
+
+        .btn-primary:hover {
+            background-color: #0d8aee;
+        }
+
+        .additional-options {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 16px;
+            font-size: 14px;
+        }
+
+        .additional-options a {
+            color: #2196F3;
+            text-decoration: none;
+        }
+
+        .additional-options a:hover {
+            text-decoration: underline;
+        }
+
+        .alert {
+            padding: 12px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert-info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+    </style>
+    {% endblock %}
+</head>
+<body>
+    <div class="login-container">
+        <h1>Welcome Back</h1>
+
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+
+        <!-- Social Login Buttons -->
+        <div class="social-login">
+            <!-- Google Sign-In button will be rendered here -->
+            <div id="google-button-container"></div>
+
+            <button class="btn btn-facebook" onclick="loginWithFacebook()">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Facebook_logo_36x36.svg/36px-Facebook_logo_36x36.svg.png" alt="Facebook">
+                Continue with Facebook
+            </button>
+
+            <button class="btn btn-apple" onclick="loginWithApple()">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/Apple_logo_white.svg" alt="Apple">
+                Continue with Apple
+            </button>
+        </div>
+
+        <div class="divider">
+            <span>OR</span>
+        </div>
+
+        <!-- OTP Login Form -->
+        <div class="email-login">
+            <div class="form-group">
+                <label for="email">Email or Phone</label>
+                <input type="text" id="email" placeholder="Enter your email or phone number">
+            </div>
+
+            <button class="btn btn-primary" onclick="requestOTP()">Request OTP</button>
+
+            <div id="otp-section" style="display: none; margin-top: 15px;">
+                <div class="form-group">
+                    <label for="otp">One-Time Password</label>
+                    <input type="text" id="otp" placeholder="Enter the OTP you received">
+                </div>
+
+                <button class="btn btn-primary" onclick="verifyOTP()">Login</button>
+            </div>
+        </div>
+
+        <div class="additional-options">
+            <a href="{% url 'register' %}" id="signup-link">New user? Sign up</a>
+            <a href="#" id="forgot-password-link">Forgot password?</a>
+        </div>
+    </div>
+
+    {% block javascript %}
+    <script>
+        // Get CSRF token for secure API requests
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        const csrftoken = getCookie('csrftoken');
+
+        // Google Sign-In setup
+        function setupGoogleSignIn() {
+            // Add click event to the Google button
+            const googleButton = document.getElementById('google-button-container');
+            googleButton.innerHTML = `
+                <button class="btn" style="background-color: white; color: #333; border: 1px solid #dadce0; width: 100%; display: flex; align-items: center; justify-content: center;">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="Google" style="width: 20px; height: 20px; margin-right: 10px;">
+                    Continue with Google
+                </button>
+            `;
+
+            googleButton.querySelector('button').addEventListener('click', function() {
+                initiateGoogleLogin();
+            });
+        }
+
+        // Start Google OAuth flow with popup
+        function initiateGoogleLogin() {
+            const client_id = '{{ GOOGLE_CLIENT_ID }}';
+
+            // IMPORTANT: This exact URL must be added to Google Cloud Console's
+            // "Authorized redirect URIs" section for your OAuth 2.0 client ID
+            const redirect_uri = window.location.origin + '/social_signin_template/';
+
+            console.log("Redirect URI being used:", redirect_uri);
+            console.log("Make sure this exact URI is added to Google Cloud Console");
+
+            // OAuth parameters
+            const oauth2Endpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
+            const params = {
+                client_id: client_id,
+                redirect_uri: redirect_uri,
+                response_type: 'token',
+                scope: 'email profile',
+                prompt: 'select_account'
+            };
+
+            // Build query string
+            const googleQueryString = Object.keys(params)
+                .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
+                .join('&');
+
+            // Open popup
+            const width = 500;
+            const height = 600;
+            const left = (window.screen.width / 2) - (width / 2);
+            const top = (window.screen.height / 2) - (height / 2);
+
+            const popup = window.open(
+                `${oauth2Endpoint}?${googleQueryString}`,
+                'googleLogin',
+                `width=${width},height=${height},left=${left},top=${top}`
+            );
+
+            // Poll for redirect completion
+            const pollTimer = window.setInterval(function() {
+                try {
+                    // Check if we can access the popup's location
+                    if (popup.closed || popup.location.href.indexOf(redirect_uri) != -1) {
+                        window.clearInterval(pollTimer);
+
+                        if (!popup.closed) {
+                            const urlParams = new URLSearchParams(popup.location.hash.substring(1));
+                            const accessToken = urlParams.get('access_token');
+
+                            if (accessToken) {
+                                // Close the popup
+                                popup.close();
+
+                                // Send the token to your backend
+                                sendSocialToken('google', accessToken);
+                            } else {
+                                console.error('No access token received from Google');
+                                alert('Failed to authenticate with Google. Please try again.');
+                            }
+                        } else {
+                            console.error('Popup was closed before authentication completed');
+                        }
+                    }
+                } catch (e) {
+                    // Polling will throw errors until redirect happens
+                    // This is normal and can be ignored
+                }
+            }, 500);
+        }
+
+        // Handle Google credential response
+        function handleGoogleCredentialResponse(response) {
+            console.log("Google credential response received");
+            if (response && (response.credential || response.code || response.token)) {
+                const token = response.credential || response.code || response.token;
+                sendSocialToken('google', token);
+            } else {
+                console.error("No credential received from Google");
+            }
+        }
+
+        function loginWithFacebook() {
+            console.log('Facebook login clicked');
+            FB.login(function(response) {
+                if (response.authResponse) {
+                    // Send the access token to your backend
+                    sendSocialToken('facebook', response.authResponse.accessToken);
+                }
+            }, {scope: 'email'});
+        }
+
+        function loginWithApple() {
+            console.log('Apple login clicked');
+            // Implement Apple Sign In
+            // This is a placeholder - Apple Sign In requires additional configuration
+        }
+
+        function sendSocialToken(provider, token) {
+            fetch('{% url "social-login" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                },
+                body: JSON.stringify({
+                    provider: provider,
+                    token: token
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Success:', data);
+                // Store tokens in localStorage
+                localStorage.setItem('accessToken', data.access);
+                localStorage.setItem('refreshToken', data.refresh);
+
+                // Redirect to dashboard or home
+                window.location.href = "#";
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Failed to authenticate. Please try again.');
+            });
+        }
+
+        // OTP functions
+        function requestOTP() {
+            const emailOrPhone = document.getElementById('email').value;
+
+            if (!emailOrPhone) {
+                alert('Please enter your email or phone number');
+                return;
+            }
+
+            // Determine if input is email or phone
+            const isEmail = emailOrPhone.includes('@');
+            const endpoint = isEmail ? "{% url 'request-email-otp' %}" : "{% url 'request-phone-otp' %}";
+            const payload = isEmail
+                ? { email: emailOrPhone, purpose: 'LOGIN' }
+                : { phone: emailOrPhone, purpose: 'LOGIN' };
+
+            console.log(`Requesting OTP for ${isEmail ? 'email' : 'phone'}: ${emailOrPhone}`);
+
+            fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.detail || 'Failed to send OTP');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Show OTP input section
+                document.getElementById('otp-section').style.display = 'block';
+                alert('OTP sent successfully! Please check your ' + (isEmail ? 'email' : 'phone'));
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert(error.message || 'Failed to send OTP. Please try again.');
+            });
+        }
+
+        function verifyOTP() {
+            const emailOrPhone = document.getElementById('email').value;
+            const otp = document.getElementById('otp').value;
+
+            if (!otp) {
+                alert('Please enter the OTP you received');
+                return;
+            }
+
+            // Determine if input is email or phone
+            const isEmail = emailOrPhone.includes('@');
+            const payload = isEmail
+                ? { email: emailOrPhone, otp: otp }
+                : { phone: emailOrPhone, otp: otp };
+
+            console.log(`Verifying OTP for ${isEmail ? 'email' : 'phone'}: ${emailOrPhone}`);
+
+            fetch("{% url 'otp-login' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrftoken
+                },
+                body: JSON.stringify(payload)
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.detail || 'Failed to verify OTP');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Store the tokens
+                localStorage.setItem('accessToken', data.access);
+                localStorage.setItem('refreshToken', data.refresh);
+
+                // Redirect to dashboard or home
+                window.location.href = "#";
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert(error.message || 'Failed to verify OTP. Please try again.');
+            });
+        }
+
+        // Function called when Google library loads
+        function onGoogleLibraryLoad() {
+            console.log("Google Identity Services library loaded");
+            setupGoogleSignIn();
+
+            // Check if we have a hash fragment (returning from OAuth)
+            if (window.location.hash && window.location.hash.includes('access_token')) {
+                const urlParams = new URLSearchParams(window.location.hash.substring(1));
+                const accessToken = urlParams.get('access_token');
+
+                if (accessToken) {
+                    // Send the token to your backend
+                    sendSocialToken('google', accessToken);
+
+                    // Clear the hash to avoid processing it again on page refresh
+                    history.replaceState(null, null, ' ');
+                }
+            }
+        }
+    </script>
+
+    <!-- Load Google Identity Services library -->
+    <script>
+        // Define a callback function that will be called when Google's API is loaded
+        function googleLibraryLoaded() {
+            console.log("Google Identity Services library loaded");
+            onGoogleLibraryLoad();
+        }
+    </script>
+    <script src="https://accounts.google.com/gsi/client?onload=googleLibraryLoaded" async defer></script>
+
+    <!-- Load Facebook SDK -->
+    <script>
+        window.fbAsyncInit = function() {
+            FB.init({
+                appId: '{{ FACEBOOK_APP_ID }}',
+                cookie: true,
+                xfbml: true,
+                version: 'v11.0'
+            });
+        };
+
+        (function(d, s, id) {
+            var js, fjs = d.getElementsByTagName(s)[0];
+            if (d.getElementById(id)) return;
+            js = d.createElement(s); js.id = id;
+            js.src = "https://connect.facebook.net/en_US/sdk.js";
+            fjs.parentNode.insertBefore(js, fjs);
+        }(document, 'script', 'facebook-jssdk'));
+    </script>
+    {% endblock %}
+</body>
+</html>

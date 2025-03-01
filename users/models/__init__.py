@@ -1,2 +1,2 @@
 from .user_model import User
-from .otp_model import OTP
+from .otp_model import OTP, SocialAccount

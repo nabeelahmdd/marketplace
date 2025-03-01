@@ -13,6 +13,10 @@ from .views import (
     RegisterView,
     RequestEmailOTPView,
     RequestPhoneOTPView,
+    SocialAccountDisconnectView,
+    SocialAccountsView,
+    SocialLoginTemplateView,
+    SocialLoginView,
     UserProfileView,
     VerifyOTPView,
 )
@@ -57,4 +61,21 @@ urlpatterns = [
     # OTP-based Authentication
     path('otp/register/', OTPRegisterView.as_view(), name='otp-register'),
     path('otp/login/', OTPLoginView.as_view(), name='otp-login'),
+    # Social Authentication
+    path('auth/social/login/', SocialLoginView.as_view(), name='social-login'),
+    path(
+        'auth/social/accounts/',
+        SocialAccountsView.as_view(),
+        name='social-accounts',
+    ),
+    path(
+        'auth/social/disconnect/',
+        SocialAccountDisconnectView.as_view(),
+        name='social-disconnect',
+    ),
+    path(
+        'social_signin_template/',
+        SocialLoginTemplateView.as_view(),
+        name="'social_signin_template",
+    ),
 ]

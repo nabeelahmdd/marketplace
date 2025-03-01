@@ -5,6 +5,8 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from .user_model import User
+
 
 class OTP(models.Model):
     """Model to store OTP codes and track verification attempts.
@@ -169,3 +171,63 @@ class OTP(models.Model):
         self.is_verified = True
         self.save()
         return True
+
+
+class SocialAccount(models.Model):
+    """Model to store social accounts linked to a user.
+
+    This model tracks social provider accounts that have been linked to a user,
+    storing the provider type and unique provider ID to enable login through
+    these social accounts.
+    """
+
+    PROVIDER_CHOICES = (
+        ('google', _('Google')),
+        ('facebook', _('Facebook')),
+        ('apple', _('Apple')),
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='social_accounts',
+        help_text=_("User this social account belongs to"),
+    )
+    provider = models.CharField(
+        _('Provider'),
+        max_length=20,
+        choices=PROVIDER_CHOICES,
+        help_text=_("Social authentication provider (e.g., Google, Facebook)"),
+    )
+    provider_id = models.CharField(
+        _('Provider ID'),
+        max_length=255,
+        help_text=_("Unique ID from the social provider"),
+    )
+    email = models.EmailField(
+        _('Provider Email'),
+        blank=True,
+        null=True,
+        help_text=_("Email address from the social provider"),
+    )
+    name = models.CharField(
+        _('Provider Name'),
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text=_("User's name from the social provider"),
+    )
+    profile_picture = models.URLField(
+        _('Profile Picture URL'),
+        blank=True,
+        null=True,
+        help_text=_("Profile picture URL from the social provider"),
+    )
+
+    class Meta:
+        unique_together = ('provider', 'provider_id')
+        verbose_name = _('social account')
+        verbose_name_plural = _('social accounts')
+
+    def __str__(self):
+        return f"{self.provider} - {self.email or self.provider_id}"

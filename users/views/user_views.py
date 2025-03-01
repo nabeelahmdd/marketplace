@@ -7,6 +7,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from django.utils.translation import gettext_lazy as _
+from django.views.generic import TemplateView
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -817,3 +818,17 @@ class ChangePasswordView(APIView):
             {"message": _("Password updated successfully")},
             status=status.HTTP_200_OK,
         )
+
+
+class SocialLoginTemplateView(TemplateView):
+    """View for the social login page."""
+
+    template_name = 'social_login.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Add client IDs to template context
+        context['GOOGLE_CLIENT_ID'] = settings.GOOGLE_CLIENT_ID
+        context['FACEBOOK_APP_ID'] = settings.FACEBOOK_APP_ID
+        context['APPLE_CLIENT_ID'] = getattr(settings, 'APPLE_CLIENT_ID', '')
+        return context
