@@ -241,3 +241,9 @@ FRONTEND_URL = config['APP']['FRONTEND_URL']
 # # For development, you can use console backend to see emails in the console
 # if DEBUG:
 #     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Social authentication settings
+GOOGLE_CLIENT_ID = config['SOCIAL']['GOOGLE_CLIENT_ID']
+FACEBOOK_APP_ID = config['SOCIAL']['FACEBOOK_APP_ID']
+FACEBOOK_APP_SECRET = config['SOCIAL']['FACEBOOK_APP_SECRET']
+APPLE_CLIENT_ID = config['SOCIAL']['APPLE_CLIENT_ID']
