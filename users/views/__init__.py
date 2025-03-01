@@ -4,3 +4,10 @@ from .auth_views import (
     PasswordResetConfirmView,
     ActivateUserView
 )
+from .otp_views import (
+    RequestPhoneOTPView,
+    RequestEmailOTPView,
+    VerifyOTPView,
+    OTPRegisterView,
+    OTPLoginView
+)

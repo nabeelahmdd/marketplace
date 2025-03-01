@@ -4,3 +4,10 @@ from .auth_serializers import (
     ResetPasswordConfirmSerializer,
     ActivateAccountSerializer
 )
+from .otp_serializers import (
+    RequestPhoneOTPSerializer,
+    RequestEmailOTPSerializer,
+    VerifyOTPSerializer,
+    OTPRegisterSerializer,
+    OTPLoginSerializer,
+)

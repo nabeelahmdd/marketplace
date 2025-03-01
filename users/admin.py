@@ -4,7 +4,7 @@ from django.contrib.auth.models import Group
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
-from .models import User
+from .models import OTP, User
 
 
 @admin.register(User)
@@ -288,3 +288,33 @@ class CustomUserAdmin(BaseUserAdmin):
 
 # Unregister Group model from admin
 admin.site.unregister(Group)
+
+
+@admin.register(OTP)
+class OTPAdmin(admin.ModelAdmin):
+    """Admin configuration for OTP model."""
+
+    list_display = [
+        'identifier',
+        'type',
+        'purpose',
+        'otp',
+        'is_verified',
+        'attempts',
+        'created_at',
+        'expires_at',
+    ]
+    list_filter = ['type', 'purpose', 'is_verified', 'created_at']
+    search_fields = ['identifier', 'otp']
+    readonly_fields = ['created_at', 'expires_at']
+    fieldsets = (
+        (
+            'Basic Information',
+            {'fields': ('identifier', 'type', 'purpose', 'otp')},
+        ),
+        (
+            'Verification Status',
+            {'fields': ('is_verified', 'attempts', 'max_attempts')},
+        ),
+        ('Timestamps', {'fields': ('created_at', 'expires_at')}),
+    )
