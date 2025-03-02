@@ -34,6 +34,7 @@ class CategorySerializer(serializers.ModelSerializer):
     subcategory_count = serializers.SerializerMethodField(
         help_text="Number of direct child categories"
     )
+    subcategories = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
@@ -54,6 +55,7 @@ class CategorySerializer(serializers.ModelSerializer):
             "subcategory_count",
             "created_on",
             "updated_on",
+            "subcategories",
         ]
 
     def get_subcategory_count(self, obj):
@@ -68,3 +70,8 @@ class CategorySerializer(serializers.ModelSerializer):
             int: Count of active subcategories
         """
         return obj.subcategories.filter(is_active=True).count()
+
+    def get_subcategories(self, obj):
+        """Recursively fetch child categories."""
+        children = obj.subcategories.filter(is_active=True)
+        return CategorySerializer(children, many=True).data

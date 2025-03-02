@@ -37,7 +37,9 @@ class CategoryListView(generics.ListAPIView):
     - Finding specific categories via search
     """
 
-    queryset = Category.objects.filter(is_active=True, is_deleted=False)
+    queryset = Category.objects.filter(
+        is_active=True, is_deleted=False, parent=None
+    )
     serializer_class = CategorySerializer
     permission_classes = [AllowAny]
     filter_backends = [
