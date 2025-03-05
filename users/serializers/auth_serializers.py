@@ -9,40 +9,114 @@ User = get_user_model()
 class ResetPasswordRequestSerializer(serializers.Serializer):
     """Serializer for requesting a password reset.
 
-    Validates the email address format and existence.
+    Validates that the provided email or mobile number exists in the system
+    before initiating the password reset process.
     """
 
     email = serializers.EmailField(
-        required=True, help_text=_("Email address associated with your account")
+        required=False, help_text="Email address for password reset"
+    )
+    mobile = serializers.CharField(
+        required=False, help_text="Mobile number for password reset"
     )
 
-    def validate_email(self, value):
-        """Normalize email to lowercase."""
-        return value.lower()
+    def validate(self, data):
+        """Validate that either email or mobile is provided and exists.
+
+        Args:
+        ----
+            data (dict): The data to validate
+
+        Returns:
+        -------
+            dict: The validated data
+
+        Raises:
+        ------
+            serializers.ValidationError: If validation fails
+        """
+        email = data.get('email')
+        mobile = data.get('mobile')
+
+        if not email and not mobile:
+            raise serializers.ValidationError(
+                _("Either email or mobile must be provided.")
+            )
+
+        # Check if user exists with the provided credentials
+        if email and not User.objects.filter(email=email).exists():
+            # We don't reveal if the email exists or not for security
+            # Just return the validated data
+            pass
+        elif mobile and not User.objects.filter(mobile=mobile).exists():
+            # We don't reveal if the mobile exists or not for security
+            # Just return the validated data
+            pass
+
+        return data
 
 
 class ResetPasswordConfirmSerializer(serializers.Serializer):
     """Serializer for confirming a password reset.
 
-    Validates the UID, token, and new password.
+    Handles validation and processing of password reset confirmations.
     """
 
-    uid = serializers.CharField(
-        required=True, help_text=_("User ID encoded in base64")
+    email = serializers.EmailField(
+        required=False, help_text="Email for which OTP was sent"
     )
-    token = serializers.CharField(
-        required=True, help_text=_("Password reset token")
+    mobile = serializers.CharField(
+        required=False, help_text="Mobile number for which OTP was sent"
+    )
+    otp = serializers.CharField(
+        required=True, min_length=6, max_length=6, help_text="OTP code received"
     )
     new_password = serializers.CharField(
         required=True,
         write_only=True,
         style={'input_type': 'password'},
-        help_text=_("New password to set"),
+        help_text="New password to set",
     )
 
+    def validate(self, data):
+        """Validate that either email or mobile is provided.
+
+        Args:
+        ----
+            data (dict): The data to validate
+
+        Returns:
+        -------
+            dict: The validated data
+
+        Raises:
+        ------
+            serializers.ValidationError: If validation fails
+        """
+        email = data.get('email')
+        mobile = data.get('mobile')
+
+        if not email and not mobile:
+            raise serializers.ValidationError(
+                _("Either email or mobile must be provided.")
+            )
+
+        return data
+
     def validate_new_password(self, value):
-        """Validate that the new password meets
-        complexity requirements.
+        """Validate new password against Django's built-in validation rules.
+
+        Args:
+        ----
+            value (str): The new password to validate
+
+        Returns:
+        -------
+            str: The validated new password
+
+        Raises:
+        ------
+            ValidationError: If new password doesn't meet security requirements
         """
         validate_password(value)
         return value

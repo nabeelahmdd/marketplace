@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 import configparser
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
@@ -50,6 +51,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'drf_yasg',
     'corsheaders',
 ]
@@ -57,7 +59,12 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     'core',
     'users',
-    'shop',
+    'listings',
+    'common',
+    'messaging',
+    'moderation',
+    'notifications',
+    'payments',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -82,6 +89,31 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# In your settings.py
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'JTI_CLAIM': 'jti',
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=60),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+}
+
 
 ROOT_URLCONF = 'marketplace.urls'
 
@@ -110,7 +142,7 @@ WSGI_APPLICATION = 'marketplace.wsgi.application'
 DATABASE_CRADENTIAL = config['DATABASE']
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django.contrib.gis.db.backends.postgis',
         'NAME': DATABASE_CRADENTIAL['DB_NAME'],
         'USER': DATABASE_CRADENTIAL['DB_USER'],
         'PASSWORD': DATABASE_CRADENTIAL.get('DB_PASSWORD'),
@@ -203,27 +235,60 @@ CORS_ALLOW_ALL_ORIGINS = (
 )
 CORS_ALLOW_CREDENTIALS = True
 
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} \
+                {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': 'django.log',
+            'formatter': 'verbose',
         },
     },
     'loggers': {
         'django': {
-            'handlers': ['console'],
+            'handlers': ['console', 'file'],
             'level': 'INFO',
+            'propagate': True,
         },
-        'drf_yasg': {  # Add specific logging for drf_yasg
-            'handlers': ['console'],
+        'users': {  # Add specific logging for your users app
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'drf_yasg': {  # Logging for drf_yasg
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'rest_framework': {  # Logging for REST framework
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'rest_framework_simplejwt': {  # Logging for simplejwt
+            'handlers': ['console', 'file'],
             'level': 'DEBUG',
             'propagate': True,
         },
     },
 }
-
 
 # Email Configuration
 EMAIL_BACKEND = config['EMAIL']['EMAIL_BACKEND']
@@ -247,3 +312,8 @@ GOOGLE_CLIENT_ID = config['SOCIAL']['GOOGLE_CLIENT_ID']
 FACEBOOK_APP_ID = config['SOCIAL']['FACEBOOK_APP_ID']
 FACEBOOK_APP_SECRET = config['SOCIAL']['FACEBOOK_APP_SECRET']
 APPLE_CLIENT_ID = config['SOCIAL']['APPLE_CLIENT_ID']
+
+AUTHENTICATION_BACKENDS = [
+    'users.backends.EmailOrMobileAuthBackend',  # Custom auth backend
+    'django.contrib.auth.backends.ModelBackend',  # Default backend as fallback
+]

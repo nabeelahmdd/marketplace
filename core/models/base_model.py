@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.utils import timezone
 
 
 class BaseModel(models.Model):
@@ -22,30 +23,18 @@ class BaseModel(models.Model):
         help_text="Designates whether this record was deleted using soft \
             deletion. Default is False.",
     )
-    created_on = models.DateTimeField(
+    created_at = models.DateTimeField(
         auto_now_add=True,
         db_index=True,
         help_text="Timestamp when this record was created.",
     )
-    updated_on = models.DateTimeField(
+    updated_at = models.DateTimeField(
         auto_now=True, help_text="Timestamp when this record was last updated."
     )
-    deleted_on = models.DateTimeField(
+    deleted_at = models.DateTimeField(
         null=True,
         blank=True,
         help_text="Timestamp when this record was soft deleted.",
-    )
-    created_by = models.ForeignKey(
-        "users.User",
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name="%(class)s_created",
-    )
-    updated_by = models.ForeignKey(
-        "users.User",
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name="%(class)s_updated",
     )
 
     objects = models.Manager()
@@ -55,3 +44,15 @@ class BaseModel(models.Model):
         indexes = [
             models.Index(fields=["is_active", "is_deleted"]),
         ]
+
+    def soft_delete(self):
+        """Soft delete the record by marking it as deleted"""
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+    def restore(self):
+        """Restore a soft-deleted record"""
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])

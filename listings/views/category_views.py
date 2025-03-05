@@ -7,8 +7,8 @@ from rest_framework import filters, generics, status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from shop.models import Category
-from shop.serializers import CategorySerializer
+from listings.models import Category
+from listings.serializers import CategorySerializer
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,8 @@ class CategoryListView(generics.ListAPIView):
     ordering_fields = [
         "name",
         "display_order",
-        "created_on",
-        "updated_on",
+        "created_at",
+        "updated_at",
     ]
 
     ordering = ["display_order", "name"]  # Default ordering
@@ -102,8 +102,8 @@ class CategoryListView(generics.ListAPIView):
         Order results by any of the following:
         - name (alphabetical)
         - display_order (sequence number)
-        - created_on (newest/oldest)
-        - updated_on (recently updated)
+        - created_at (newest/oldest)
+        - updated_at (recently updated)
 
         ## Response:
         List of category objects with complete metadata and hierarchy info.

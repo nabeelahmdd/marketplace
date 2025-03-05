@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from shop.models import Category
+from listings.models import Category
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -53,8 +53,8 @@ class CategorySerializer(serializers.ModelSerializer):
             "is_active",
             "display_order",
             "subcategory_count",
-            "created_on",
-            "updated_on",
+            "created_at",
+            "updated_at",
             "subcategories",
         ]
 

@@ -15,25 +15,19 @@ class BannerAdmin(admin.ModelAdmin):
         'url',
         'is_active',
         'is_deleted',
-        'created_by',
-        'updated_by',
-        'created_on',
+        'created_at',
     )
     search_fields = (
         'title',
         'subtitle',
         'url',
-        'created_by__email',
-        'updated_by__email',
     )
-    list_filter = ('is_active', 'is_deleted', 'created_on')
-    ordering = ('-created_on',)
+    list_filter = ('is_active', 'is_deleted', 'created_at')
+    ordering = ('-created_at',)
     readonly_fields = (
-        'created_on',
-        'updated_on',
+        'created_at',
+        'updated_at',
         'image_preview',
-        'created_by',
-        'updated_by',
     )
 
     fieldsets = (
@@ -43,9 +37,9 @@ class BannerAdmin(admin.ModelAdmin):
         ),
         (
             'Status & Ownership',
-            {'fields': ('is_active', 'is_deleted', 'created_by', 'updated_by')},
+            {'fields': ('is_active', 'is_deleted')},
         ),
-        ('Timestamps', {'fields': ('created_on', 'updated_on')}),
+        ('Timestamps', {'fields': ('created_at', 'updated_at')}),
     )
 
     # Enable bulk editing in list view

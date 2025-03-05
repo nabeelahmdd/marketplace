@@ -84,7 +84,7 @@ class Banner(BaseModel):
     )
 
     class Meta:
-        ordering = ["display_order", "-created_on"]
+        ordering = ["display_order", "-created_at"]
         verbose_name = _("Banner")
         verbose_name_plural = _("Banners")
         indexes = [

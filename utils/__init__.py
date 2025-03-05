@@ -10,3 +10,6 @@ from .email import (
     send_password_reset_email,
     send_account_activation_email
 )
+from .permission import (
+    IsSellerPermission
+)

@@ -1,39 +1,36 @@
-import ipaddress
 import logging
 import time
 
-from django.conf import settings
-from django.contrib.auth import authenticate, get_user_model
-from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
+from django.contrib.auth import authenticate
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-from django.views.generic import TemplateView
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from users.models import OTP, User
 from users.serializers import (
+    ChangeEmailSerializer,
+    ChangeMobileSerializer,
     ChangePasswordSerializer,
     LoginSerializer,
+    ResendOTPSerializer,
+    ResetPasswordConfirmSerializer,
+    ResetPasswordRequestSerializer,
     UserSerializer,
     UserSerializerWithToken,
     UserUpdateSerializer,
+    VerifyOTPSerializer,
 )
-from utils import send_account_activation_email
-
-from .auth_views import account_activation_token
 
 # Logger setup
 logger = logging.getLogger(__name__)
-
-# Get User model
-User = get_user_model()
 
 
 class LoginRateThrottle(AnonRateThrottle):
@@ -48,27 +45,24 @@ class LoginRateThrottle(AnonRateThrottle):
 class LoginView(APIView):
     """API endpoint for user login with JWT authentication.
 
-    This endpoint authenticates users via email and password,
+    This endpoint authenticates users via email/mobile and password,
     returning access and refresh tokens upon successful login.
 
     ## Request Requirements:
-    - Must provide valid email address
+    - Must provide either valid email address or mobile number
     - Must provide correct password
-    - Account must be active and not deleted
+    - Account must be active
 
     ## Process Flow:
     1. Validates user credentials
     2. Authenticates user against database
-    3. Records login IP address for security
-    4. Generates JWT access & refresh tokens
-    5. Returns tokens & detailed user data
+    3. Generates JWT access & refresh tokens
+    4. Returns tokens & detailed user data
 
     ## Security Measures:
     - Rate limiting (5 attempts per minute)
     - Generic error messages for security
-    - IP address tracking for audit
     - JWT with configurable expiry
-    - Soft deletion checks
 
     ## Response Data:
     - Access token for API authorization
@@ -83,32 +77,27 @@ class LoginView(APIView):
         operation_id='login_user',
         operation_summary="User Login",
         operation_description="""
-        Authenticate with email and password to receive JWT tokens.
+        Authenticate with email/mobile and password to receive JWT tokens.
 
         ## Request Requirements:
-        - Email must be registered in the system
+        - Email or mobile must be registered in the system
         - Password must match stored password
-        - Account must be active (not disabled/suspended/deleted)
+        - Account must be active
 
         ## Process Flow:
         1. Validates request format
         2. Authenticates credentials
-        3. Records login activity
-        4. Generates fresh JWT tokens
-        5. Returns user data with tokens
+        3. Generates fresh JWT tokens
+        4. Returns user data with tokens
 
         ## Security:
         - Rate limited to 5 attempts per minute
         - Login attempts are logged
-        - IP addresses are recorded
         - Failed attempts use same response time
-        - Soft-deleted accounts cannot log in
 
         ## Response Data:
         - message: Success confirmation
-        - access: JWT access token
-        - refresh: JWT refresh token
-        - user: User profile data
+        - user: User profile data with tokens
         """,
         request_body=LoginSerializer,
         responses={
@@ -118,8 +107,6 @@ class LoginView(APIView):
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'message': openapi.Schema(type=openapi.TYPE_STRING),
-                        'access': openapi.Schema(type=openapi.TYPE_STRING),
-                        'refresh': openapi.Schema(type=openapi.TYPE_STRING),
                         'user': openapi.Schema(type=openapi.TYPE_OBJECT),
                     },
                 ),
@@ -135,16 +122,13 @@ class LoginView(APIView):
         Processes the login request by:
         1. Validating the request data format
         2. Extracting and authenticating credentials
-        3. Recording login IP for security audit
-        4. Generating fresh JWT tokens
-        5. Returning tokens with user profile data
+        3. Generating fresh JWT tokens
+        4. Returning tokens with user profile data
 
         Security measures:
         - Rate limiting enforced by throttle_classes
         - Generic error messages to prevent user enumeration
-        - IP address tracking for security monitoring
         - Consistent response timing regardless of outcome
-        - Soft deletion verification
 
         Args:
         ----
@@ -169,135 +153,101 @@ class LoginView(APIView):
             )
 
         # Extract validated credentials
-        email = serializer.validated_data['email']
+        email = serializer.validated_data.get('email')
+        mobile = serializer.validated_data.get('mobile')
         password = serializer.validated_data['password']
 
-        # Track login attempts for security
-        client_ip = self._get_client_ip(request)
-
         try:
-            # Check if user exists first and is not deleted
-            user_exists = User.objects.filter(
-                email=email, is_deleted=False
-            ).exists()
+            # Determine user by email or mobile
+            lookup_kwargs = {}
+            if email:
+                lookup_kwargs['email'] = email
+            elif mobile:
+                lookup_kwargs['mobile'] = mobile
+
+            # Check if user exists
+            user_exists = User.objects.filter(**lookup_kwargs).exists()
 
             if not user_exists:
-                # Log failed login attempt - user doesn't exist or is deleted
+                # Log failed login attempt - user doesn't exist
                 logger.warning(
-                    f"""Login attempt for non-existent or deleted email:
-                    {email} from IP: {client_ip}"""
+                    f"Login attempt for non-existent account: {email or mobile}"
                 )
                 time.sleep(1)  # Delay to prevent timing attacks
                 return Response(
-                    {"detail": _("Invalid email or password")},
+                    {"detail": _("Invalid credentials")},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            # User exists and is not deleted, now check specific
-            # issues before authentication
-            user = User.objects.get(email=email, is_deleted=False)
-
-            # Check if user is active
-            if not user.is_active:
-                logger.warning(
-                    f"Login attempt for inactive account: {email} from IP: \
-                        {client_ip}"
-                )
-                return Response(
-                    {
-                        "detail": _(
-                            "Your account is inactive. Please contact an \
-                            administrator."
-                        )
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-
-            # Check if account is verified (if you have this field)
-            if hasattr(user, 'account_verified') and not user.account_verified:
-                logger.warning(
-                    f"Login attempt for unverified account: {email} \
-                    from IP: {client_ip}"
-                )
-                return Response(
-                    {
-                        "detail": _(
-                            "Please verify your account before logging in."
-                        )
-                    },
-                    status=status.HTTP_401_UNAUTHORIZED,
-                )
-
-            # Now try to authenticate with the password
-            # Note: Django's authenticate will respect is_deleted=False
-            # if it's in your User model
-            authenticated_user = authenticate(
-                request, email=email, password=password
+            # Now authenticate the user
+            # Need to adapt depending on which field was provided
+            user = authenticate(
+                request, email=email, mobile=mobile, password=password
             )
 
-            if not authenticated_user:
+            if not user:
                 # Log failed login attempt - wrong password
                 logger.warning(
-                    f"Failed login attempt (wrong password) for: {email} \
-                    from IP: {client_ip}"
+                    f"Failed login attempt (wrong password) for: \
+                        {email or mobile}"
                 )
                 return Response(
-                    {"detail": _("Invalid email or password")},
+                    {"detail": _("Invalid credentials")},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
 
-            # Double-check the authenticated user is not deleted
-            # (belt and braces)
-            if getattr(authenticated_user, 'is_deleted', False):
-                logger.warning(
-                    f"Login attempt for deleted account: {email} \
-                    from IP: {client_ip}"
-                )
-                return Response(
-                    {"detail": _("Invalid email or password")},
-                    status=status.HTTP_401_UNAUTHORIZED,
+            # Check if user is verified
+            if not user.is_verified:
+                # Generate OTP for verification
+                identifier = email or mobile
+                otp_type = 'EMAIL' if email else 'PHONE'
+
+                # Generate and send OTP
+                otp = OTP.generate_otp(
+                    identifier=identifier, type=otp_type, purpose='LOGIN'
                 )
 
-            # Update last login IP if available
-            if client_ip:
-                authenticated_user.last_login_ip = client_ip
-                authenticated_user.save(
-                    update_fields=['last_login_ip', 'last_login']
+                # In a real implementation, you would send the OTP via email
+                # or SMS here
+                # For now, we'll just log it
+                logger.info(
+                    f"Login OTP generated for unverified user: \
+                        {identifier}, OTP: {otp.otp}"
+                )
+                print(
+                    (
+                        f"Login OTP generated for unverified user: \
+                            {identifier}, OTP: {otp.otp}"
+                    )
+                )
+
+                return Response(
+                    {
+                        "detail": _(
+                            "Account not verified. OTP sent for verification."
+                        ),
+                        "requires_verification": True,
+                        "identifier": identifier,
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
                 )
 
             # Generate tokens
-            refresh = RefreshToken.for_user(authenticated_user)
+            RefreshToken.for_user(user)
 
-            logger.info(
-                f"User logged in: {authenticated_user.email} \
-                    from IP: {client_ip}"
-            )
+            logger.info(f"User logged in: {user.email or user.mobile}")
 
             return Response(
                 {
                     'message': _('Login successful'),
-                    'access': str(refresh.access_token),
-                    'refresh': str(refresh),
-                    'user': UserSerializerWithToken(authenticated_user).data,
+                    'user': UserSerializerWithToken(user).data,
                 },
                 status=status.HTTP_200_OK,
             )
 
-        except User.DoesNotExist:
-            # This should not happen due to our earlier check, but just in case
-            logger.warning(
-                f"Login attempt for non-existent email (exception): {email} \
-                    from IP: {client_ip}"
-            )
-            return Response(
-                {"detail": _("Invalid email or password")},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
         except Exception as e:
             # Log the exception but don't expose details to the client
-            logger.error(
-                f"Login error for {email} from IP {client_ip}: {str(e)}"
-            )
+            logger.error(f"Login error for {email or mobile}: {str(e)}")
             return Response(
                 {
                     "detail": _(
@@ -307,68 +257,29 @@ class LoginView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    def _get_client_ip(self, request):
-        """Extract client IP address from request.
-
-        Args:
-        ----
-            request (Request): The HTTP request object
-
-        Returns:
-        -------
-            str: The client IP address or None if not available
-        """
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            # Get the first IP in case of proxy chains
-            ip = x_forwarded_for.split(',')[0].strip()
-        else:
-            ip = request.META.get('REMOTE_ADDR')
-
-        # Validate IP address format
-        try:
-            ipaddress.ip_address(ip)
-            return ip
-        except ValueError:
-            return None
-
 
 class RegisterView(APIView):
     """API endpoint for user registration.
 
-    Handles new user account creation with validation, email verification
-    and account activation process.
+    Handles new user account creation with validation and OTP verification.
 
     ## Request Requirements:
-    - Must provide valid email address (unique)
+    - Must provide name
+    - Must provide either valid email address (unique) or mobile number (unique)
     - Must provide secure password
-    - Must provide required profile information
-    - Mobile number must be valid format with country code
-    - Email and mobile must not belong to existing non-deleted users
+    - Email and mobile must not belong to existing users
 
     ## Process Flow:
     1. Validates all user data fields
-    2. Creates a new inactive user account
-    3. Generates account activation token
-    4. Sends verification email with activation link
-    5. Returns registration success message
+    2. Creates a new unverified user account
+    3. Sends OTP for verification
+    4. Returns registration initiated message with instructions
 
     ## Security Measures:
     - Rate limiting for registration attempts
     - Password strength validation
     - Email and mobile uniqueness checks
-    - IP address tracking for audit
-    - Soft deletion checks for uniqueness validation
-    - Email verification required for account activation
-    - Secure token generation for activation
-
-    ## Notes:
-    - User accounts are created with is_active=False until email verification
-    - Email verification token is sent to user's email address
-    - Users created through this endpoint have cr_by_self=True
-    - Initial account has no role-specific permissions
-    - is_deleted is set to False by default
-    - In debug mode, activation token is returned in response
+    - OTP verification required to complete registration
     """
 
     throttle_classes = [AnonRateThrottle]
@@ -378,57 +289,39 @@ class RegisterView(APIView):
         operation_id='register_user',
         operation_summary="User Registration",
         operation_description="""
-        Register a new user and send account activation email.
+        Register a new user with name, email/mobile, and password.
 
         ## Request Requirements:
-        - Email must be valid and unique
+        - Name must be provided
+        - Either email or mobile must be valid and unique
         - Password must meet complexity requirements
-        - Required profile fields must be provided
-        - Mobile number must be valid format with country code
 
         ## Process Flow:
         1. Validates request data
-        2. Creates new inactive user account
-        3. Generates secure activation token
-        4. Sends verification email to user
-        5. Returns registration success message
-
-        ## Account Activation:
-        - User receives email with activation link
-        - Account remains inactive until email is verified
-        - Activation link contains secure token
-        - Token expires after set period (typically 24-48 hours)
+        2. Creates new unverified user account
+        3. Sends OTP for verification
+        4. Returns registration initiated message
 
         ## Security:
         - Rate limited to prevent abuse
         - Password strength validation
-        - Email verification required
+        - OTP verification required to complete registration
         - Protection against account enumeration
-        - IP address tracking for security audit
 
         ## Response:
         - Success message with verification instructions
-        - In development mode, activation details included
         """,
         request_body=UserSerializer,
         responses={
             201: openapi.Response(
-                description="User registered successfully",
+                description="Registration initiated successfully",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'message': openapi.Schema(type=openapi.TYPE_STRING),
-                        'debug_info': openapi.Schema(
-                            type=openapi.TYPE_OBJECT,
-                            properties={
-                                'uid': openapi.Schema(type=openapi.TYPE_STRING),
-                                'token': openapi.Schema(
-                                    type=openapi.TYPE_STRING
-                                ),
-                                'activation_url': openapi.Schema(
-                                    type=openapi.TYPE_STRING
-                                ),
-                            },
+                        'identifier': openapi.Schema(type=openapi.TYPE_STRING),
+                        'requires_verification': openapi.Schema(
+                            type=openapi.TYPE_BOOLEAN
                         ),
                     },
                 ),
@@ -438,21 +331,18 @@ class RegisterView(APIView):
         },
     )
     def post(self, request):
-        """Register a new user and initiate account verification.
+        """Register a new user.
 
         Processes the registration request by:
         1. Validating the submitted user data
-        2. Creating an inactive user account
-        3. Generating an activation token
-        4. Sending a verification email with activation link
-        5. Returning success message with verification instructions
+        2. Creating an unverified user account
+        3. Sending OTP for verification
 
         Security measures:
         - Rate limiting for registration attempts
-        - Email verification required for account activation
         - Detailed validation of all user fields
         - Protection against duplicate accounts through email/mobile uniqueness
-        - IP address tracking for audit and security monitoring
+        - OTP verification required to complete registration
 
         Args:
         ----
@@ -465,72 +355,45 @@ class RegisterView(APIView):
                 On validation error: HTTP 400 with field-specific errors
                 On rate limit: HTTP 429 with throttling message
         """
-        # Track registration attempt IP address
-        client_ip = self._get_client_ip(request)
-        logger.info(f"Registration attempt from IP: {client_ip}")
-
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
-            # Create user with is_active=False for email verification
-            user = serializer.save(
-                is_active=False, is_deleted=False, cr_by_self=True
+            # Create user with is_verified=False
+            user = serializer.save(is_verified=False)
+
+            # Determine identifier and OTP type
+            identifier = user.email if user.email else user.mobile
+            otp_type = 'EMAIL' if user.email else 'PHONE'
+
+            # Generate and send OTP
+            otp = OTP.generate_otp(
+                identifier=identifier, type=otp_type, purpose='REGISTER'
             )
 
-            # Generate activation token
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = account_activation_token.make_token(user)
-
-            # Build activation URL
-            activation_url = f"{settings.FRONTEND_URL}/activate/{uid}/{token}/"
-
-            # Send activation email
-            send_account_activation_email(user.email, activation_url)
-
+            # In a real implementation, you would send the OTP via email or \
+            # SMS here
+            # For now, we'll just log it
             logger.info(
-                f"User registered successfully: {user.email} \
-                    from IP: {client_ip}"
+                f"Registration OTP generated: {identifier}, OTP: {otp.otp}"
             )
 
-            # Prepare response
-            response_data = {
-                "message": _(
-                    "Registration successful. Please check your email to \
-                        activate your account."
-                )
-            }
+            logger.info(f"User registration initiated: {identifier}")
 
-            # Include debug info in development mode
-            if settings.DEBUG:
-                response_data["debug_info"] = {
-                    "uid": uid,
-                    "token": token,
-                    "activation_url": activation_url,
-                }
-
-            return Response(response_data, status=status.HTTP_201_CREATED)
+            # Return success response with verification instructions
+            return Response(
+                {
+                    "message": _(
+                        "Registration initiated. Please verify your account \
+                            with the OTP sent."
+                    ),
+                    "identifier": identifier,
+                    "requires_verification": True,
+                },
+                status=status.HTTP_201_CREATED,
+            )
 
         # Log validation errors
-        logger.warning(
-            f"Registration validation error from IP \
-                {client_ip}: {serializer.errors}"
-        )
+        logger.warning(f"Registration validation error: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def _get_client_ip(self, request):
-        """Extract client IP address from request.
-
-        Args:
-        ----
-            request (Request): The HTTP request object
-
-        Returns:
-        -------
-            str: The client IP address or None if not available
-        """
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR')
 
 
 class UserProfileView(APIView):
@@ -541,30 +404,20 @@ class UserProfileView(APIView):
     ## Access Requirements:
     - User must be authenticated with valid JWT
     - User can only access their own profile
-    - User must not be soft-deleted
 
     ## Operations:
     - GET: Retrieve complete profile information
     - PUT: Update profile fields (partial updates supported)
 
     ## Updateable Fields:
-    - first_name, last_name (personal info)
-    - mobile, country_code (contact info)
-    - gender, dob (demographic info)
-    - profile_pic (profile image)
+    - name (full name)
+    - profile_image (profile image)
+    - location (geographical location)
 
     ## Security Measures:
     - JWT authentication required
     - Rate limiting for update operations
     - Validation for all field formats
-    - Uniqueness check for mobile number against non-deleted users
-    - Soft deletion verification
-
-    ## Notes:
-    - Profile picture uploads handled with multipart form data
-    - Mobile number changes require uniqueness validation
-    - Email updates not permitted through this endpoint
-    - Password changes handled by separate endpoint
     """
 
     permission_classes = [IsAuthenticated]
@@ -578,7 +431,7 @@ class UserProfileView(APIView):
         operation_description="Get the authenticated user's profile \
             information.",
         responses={
-            200: UserUpdateSerializer(),
+            200: UserSerializer(),
             401: "Authentication credentials not provided",
             403: "Permission denied",
         },
@@ -594,14 +447,7 @@ class UserProfileView(APIView):
         -------
             Response: User profile data
         """
-        # Check if user is deleted
-        if getattr(request.user, 'is_deleted', False):
-            return Response(
-                {"detail": _("User not found")},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        serializer = UserUpdateSerializer(request.user)
+        serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
     @swagger_auto_schema(
@@ -625,7 +471,6 @@ class UserProfileView(APIView):
             400: "Validation error",
             401: "Authentication credentials not provided",
             403: "Permission denied",
-            404: "User not found",
         },
     )
     def put(self, request):
@@ -639,13 +484,6 @@ class UserProfileView(APIView):
         -------
             Response: Success message and updated user data or error messages
         """
-        # Check if user is deleted
-        if getattr(request.user, 'is_deleted', False):
-            return Response(
-                {"detail": _("User not found")},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
         serializer = UserUpdateSerializer(
             request.user,
             data=request.data,
@@ -659,13 +497,343 @@ class UserProfileView(APIView):
             )
 
         user = serializer.save()
-        logger.info(f"User profile updated: {user.email}")
+        logger.info(f"User profile updated: {user.email or user.mobile}")
 
         return Response(
             {
                 "message": _("Profile updated successfully"),
-                "user": UserUpdateSerializer(user).data,
+                "user": UserSerializer(user).data,
             }
+        )
+
+
+class LogoutView(APIView):
+    """API endpoint to log out a user.
+
+    Blacklists the refresh token to prevent further use.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        tags=['Authentication'],
+        operation_id='logout_user',
+        operation_summary="User Logout",
+        operation_description="Logout the authenticated user by blacklisting \
+            their refresh token.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['refresh'],
+            properties={
+                'refresh': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="JWT refresh token to blacklist",
+                )
+            },
+        ),
+        responses={
+            200: openapi.Response(
+                description="Logout successful",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    },
+                ),
+            ),
+            400: "Invalid token",
+            401: "Authentication credentials not provided",
+        },
+    )
+    def post(self, request):
+        """Logs out the user by blacklisting their refresh token.
+
+        Args:
+        ----
+            request (Request): HTTP request with refresh token
+
+        Returns:
+        -------
+            Response: Success message or error message
+        """
+        try:
+            refresh_token = request.data.get('refresh')
+            if not refresh_token:
+                return Response(
+                    {"detail": _("Refresh token is required")},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+
+            logger.info(
+                f"User logged out: {request.user.email or request.user.mobile}"
+            )
+            return Response(
+                {"message": _("Logout successful")},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Logout error: {str(e)}")
+            return Response(
+                {"detail": _("Invalid token")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class ChangePasswordView(APIView):
+    """API endpoint to change user password.
+
+    Allows authenticated users to change their password by providing
+    their current password and a new password.
+    """
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    throttle_classes = [UserRateThrottle]
+
+    @swagger_auto_schema(
+        tags=['User'],
+        operation_id='change_password',
+        operation_summary="Change Password",
+        operation_description="Change the authenticated user's password.",
+        request_body=ChangePasswordSerializer,
+        responses={
+            200: openapi.Response(
+                description="Password changed successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING)
+                    },
+                ),
+            ),
+            400: "Validation error or incorrect old password",
+            401: "Authentication credentials not provided",
+            403: "Permission denied",
+        },
+    )
+    def post(self, request):
+        """Changes the authenticated user's password.
+
+        Args:
+        ----
+            request (Request): HTTP request containing old and new passwords
+
+        Returns:
+        -------
+            Response: Success message or error message
+        """
+        serializer = ChangePasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify old password
+        if not request.user.check_password(
+            serializer.validated_data["old_password"]
+        ):
+            return Response(
+                {"detail": _("Incorrect old password")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Set new password
+        request.user.set_password(serializer.validated_data["new_password"])
+        request.user.save()
+
+        # Log password change
+        logger.info(
+            f"Password changed for user: \
+                {request.user.email or request.user.mobile}"
+        )
+
+        # Return success response
+        return Response(
+            {"message": _("Password updated successfully")},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChangeEmailView(APIView):
+    """API endpoint to change user email.
+
+    Allows authenticated users to change their email address by providing
+    their password for verification and a new unique email address.
+    """
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    throttle_classes = [UserRateThrottle]
+
+    @swagger_auto_schema(
+        tags=['User'],
+        operation_id='change_email',
+        operation_summary="Change Email",
+        operation_description="Change the authenticated user's email address.",
+        request_body=ChangeEmailSerializer,
+        responses={
+            200: openapi.Response(
+                description="Email changed successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'requires_verification': openapi.Schema(
+                            type=openapi.TYPE_BOOLEAN
+                        ),
+                        'identifier': openapi.Schema(type=openapi.TYPE_STRING),
+                    },
+                ),
+            ),
+            400: "Validation error or incorrect password",
+            401: "Authentication credentials not provided",
+            403: "Permission denied",
+        },
+    )
+    def post(self, request):
+        """Changes the authenticated user's email address.
+
+        Args:
+        ----
+            request (Request): HTTP request containing new email and password
+
+        Returns:
+        -------
+            Response: Success message or error message
+        """
+        serializer = ChangeEmailSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify password
+        if not request.user.check_password(
+            serializer.validated_data["password"]
+        ):
+            return Response(
+                {"detail": _("Incorrect password")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get new email and generate OTP for verification
+        new_email = serializer.validated_data["new_email"]
+
+        # Generate and send OTP
+        otp = OTP.generate_otp(
+            identifier=new_email, type='EMAIL', purpose='VERIFY_NEW_EMAIL'
+        )
+
+        # In a real implementation, you would send the OTP via email here
+        # For now, we'll just log it
+        logger.info(
+            f"Email change OTP generated for {request.user.email} to \
+                {new_email}: {otp.otp}"
+        )
+
+        # Return response with verification instructions
+        return Response(
+            {
+                "message": _(
+                    "Please verify your new email address with the OTP sent."
+                ),
+                "requires_verification": True,
+                "identifier": new_email,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChangeMobileView(APIView):
+    """API endpoint to change user mobile.
+
+    Allows authenticated users to change their mobile address by providing
+    their password for verification and a new unique mobile address.
+    """
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    throttle_classes = [UserRateThrottle]
+
+    @swagger_auto_schema(
+        tags=['User'],
+        operation_id='change_mobile',
+        operation_summary="Change Mobile",
+        operation_description="Change the authenticated user's mobile address.",
+        request_body=ChangeMobileSerializer,
+        responses={
+            200: openapi.Response(
+                description="Mobile changed successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'requires_verification': openapi.Schema(
+                            type=openapi.TYPE_BOOLEAN
+                        ),
+                        'identifier': openapi.Schema(type=openapi.TYPE_STRING),
+                    },
+                ),
+            ),
+            400: "Validation error or incorrect password",
+            401: "Authentication credentials not provided",
+            403: "Permission denied",
+        },
+    )
+    def post(self, request):
+        """Changes the authenticated user's mobile address.
+
+        Args:
+        ----
+            request (Request): HTTP request containing new mobile and password
+
+        Returns:
+        -------
+            Response: Success message or error message
+        """
+        serializer = ChangeMobileSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify password
+        if not request.user.check_password(
+            serializer.validated_data["password"]
+        ):
+            return Response(
+                {"detail": _("Incorrect password")},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get new mobile and generate OTP for verification
+        new_mobile = serializer.validated_data["new_mobile"]
+
+        # Generate and send OTP
+        otp = OTP.generate_otp(
+            identifier=new_mobile, type='EMAIL', purpose='VERIFY_NEW_PHONE'
+        )
+
+        # In a real implementation, you would send the OTP via mobile here
+        # For now, we'll just log it
+        logger.info(
+            f"Mobile change OTP generated for {request.user.mobile} to \
+                {new_mobile}: {otp.otp}"
+        )
+
+        # Return response with verification instructions
+        return Response(
+            {
+                "message": _(
+                    "Please verify your new mobile address with the OTP sent."
+                ),
+                "requires_verification": True,
+                "identifier": new_mobile,
+            },
+            status=status.HTTP_200_OK,
         )
 
 
@@ -740,95 +908,845 @@ class DeleteUserView(APIView):
             )
 
 
-class ChangePasswordView(APIView):
-    """API endpoint to change user password.
+class VerifyOTPView(APIView):
+    """API endpoint to verify an OTP.
 
-    Allows authenticated users to change their password by providing
-    their current password and a new password.
+    Validates the provided OTP against the stored OTP record.
     """
 
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-    throttle_classes = [UserRateThrottle]
+    permission_classes = [AllowAny]
 
     @swagger_auto_schema(
-        tags=['User'],
-        operation_id='change_password',
-        operation_summary="Change Password",
-        operation_description="Change the authenticated user's password.",
-        request_body=ChangePasswordSerializer,
+        tags=['Authentication'],
+        operation_id='verify_otp',
+        operation_summary="Verify OTP",
+        operation_description="""
+        Verify an OTP code for a specific identifier and purpose.
+
+        This endpoint checks if the provided OTP is valid for the given
+        identifier (phone/email) and purpose.
+
+        ## Request Requirements:
+        - Identifier (phone/email) for which OTP was generated
+        - OTP code to verify
+        - Purpose for which OTP was generated
+
+        ## Process Flow:
+        1. Locates the active OTP record
+        2. Verifies OTP code validity
+        3. Updates OTP record verification status
+        4. Returns verification result
+
+        ## Security:
+        - Maximum 3 verification attempts per OTP
+        - OTPs expire after 10 minutes
+        - OTP is marked as verified after successful verification
+        """,
+        request_body=VerifyOTPSerializer,
         responses={
             200: openapi.Response(
-                description="Password changed successfully",
+                description="OTP verified successfully",
                 schema=openapi.Schema(
                     type=openapi.TYPE_OBJECT,
                     properties={
-                        'message': openapi.Schema(type=openapi.TYPE_STRING)
+                        'message': openapi.Schema(type=openapi.TYPE_STRING),
+                        'verified': openapi.Schema(type=openapi.TYPE_BOOLEAN),
                     },
                 ),
             ),
-            400: "Validation error or incorrect old password",
-            401: "Authentication credentials not provided",
-            403: "Permission denied",
-            404: "User not found",
+            400: "Invalid or expired OTP",
         },
     )
     def post(self, request):
-        """Changes the authenticated user's password.
+        """Verify an OTP code.
 
         Args:
         ----
-            request (Request): HTTP request containing old and new passwords
+            request: HTTP request with identifier, OTP, and purpose
 
         Returns:
         -------
-            Response: Success message or error message
+            Response: Verification result
         """
-        # Check if user is deleted
-        if getattr(request.user, 'is_deleted', False):
-            return Response(
-                {"detail": _("User not found")},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        serializer = ChangePasswordSerializer(data=request.data)
+        serializer = VerifyOTPSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
                 serializer.errors, status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Verify old password
-        if not request.user.check_password(
-            serializer.validated_data["old_password"]
-        ):
+        identifier = serializer.validated_data['identifier']
+        otp_code = serializer.validated_data['otp']
+        purpose = serializer.validated_data['purpose']
+
+        # Find the active OTP record
+        otp_obj = (
+            OTP.objects.filter(
+                identifier=identifier,
+                purpose=purpose,
+                is_verified=False,
+                expires_at__gt=timezone.now(),
+            )
+            .order_by('-created_at')
+            .first()
+        )
+
+        if not otp_obj:
             return Response(
-                {"detail": _("Incorrect old password")},
+                {"detail": _("Invalid or expired OTP")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Set new password
-        request.user.set_password(serializer.validated_data["new_password"])
-        request.user.save()
+        # Verify OTP
+        verified = otp_obj.verify(otp_code)
 
-        # Log password change
-        logger.info(f"Password changed for user: {request.user.email}")
+        if not verified:
+            attempts_left = otp_obj.max_attempts - otp_obj.attempts
 
-        # Return success response
+            if attempts_left > 0:
+                return Response(
+                    {
+                        "detail": _("Invalid OTP"),
+                        "verified": False,
+                        "attempts_left": attempts_left,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            else:
+                return Response(
+                    {
+                        "detail": _(
+                            "Maximum verification attempts exceeded. \
+                                Please request a new OTP."
+                        ),
+                        "verified": False,
+                        "attempts_left": 0,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        logger.info(
+            f"OTP verified successfully for {identifier}, purpose: {purpose}"
+        )
+
+        # Handle specific actions based on purpose
+        if purpose in ['REGISTER', 'LOGIN']:
+            try:
+                if '@' in identifier:
+                    user = User.objects.get(email=identifier)
+                else:
+                    user = User.objects.get(mobile=identifier)
+
+                user.is_verified = True
+                user.save()
+
+                # Generate tokens for auto-login
+                RefreshToken.for_user(user)
+
+                return Response(
+                    {
+                        "message": _("Account verified successfully."),
+                        "verified": True,
+                        "user": UserSerializerWithToken(user).data,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": _("User not found.")},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        elif purpose == 'VERIFY_NEW_EMAIL':
+            # Only authenticated users can change their email
+            if not request.user.is_authenticated:
+                return Response(
+                    {"detail": _("Authentication required to update email.")},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            # Check if email is already in use by another user
+            if (
+                User.objects.exclude(id=request.user.id)
+                .filter(email=identifier)
+                .exists()
+            ):
+                return Response(
+                    {
+                        "detail": _(
+                            "This email is already in use by another account."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Update the email
+            request.user.email = identifier
+            request.user.save()
+
+            logger.info(
+                f"Email updated for user {request.user.id} to {identifier}"
+            )
+
+            return Response(
+                {
+                    "message": _("Email verified and updated successfully."),
+                    "verified": True,
+                    "user": UserSerializer(request.user).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        elif purpose == 'VERIFY_NEW_PHONE':
+            # Only authenticated users can change their mobile
+            if not request.user.is_authenticated:
+                return Response(
+                    {
+                        "detail": _(
+                            "Authentication required to update mobile number."
+                        )
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            # Check if mobile is already in use by another user
+            if (
+                User.objects.exclude(id=request.user.id)
+                .filter(mobile=identifier)
+                .exists()
+            ):
+                return Response(
+                    {
+                        "detail": _(
+                            "This mobile number is already in use by another \
+                                account."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Update the mobile number
+            request.user.mobile = identifier
+            request.user.save()
+
+            logger.info(
+                f"Mobile number updated for user {request.user.id} to \
+                    {identifier}"
+            )
+
+            return Response(
+                {
+                    "message": _(
+                        "Mobile number verified and updated successfully."
+                    ),
+                    "verified": True,
+                    "user": UserSerializer(request.user).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        elif purpose == 'RESET_PASSWORD':
+            # For password reset, we'll just return success
+            # The actual password change will happen in a separate view
+            return Response(
+                {
+                    "message": _(
+                        "OTP verified successfully. You can now reset your \
+                            password."
+                    ),
+                    "verified": True,
+                    "identifier": identifier,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # OTP verified successfully for other purposes
         return Response(
-            {"message": _("Password updated successfully")},
+            {"message": _("OTP verified successfully"), "verified": True},
             status=status.HTTP_200_OK,
         )
 
 
-class SocialLoginTemplateView(TemplateView):
-    """View for the social login page."""
+class ResetPasswordRequestView(APIView):
+    """API endpoint to request a password reset.
 
-    template_name = 'social_login.html'
+    Initiates the password reset process by sending an OTP to the user's
+    registered email or mobile number. This is the first step in the two-step
+    password reset flow.
+    """
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        # Add client IDs to template context
-        context['GOOGLE_CLIENT_ID'] = settings.GOOGLE_CLIENT_ID
-        context['FACEBOOK_APP_ID'] = settings.FACEBOOK_APP_ID
-        context['APPLE_CLIENT_ID'] = getattr(settings, 'APPLE_CLIENT_ID', '')
-        return context
+    permission_classes = [AllowAny]
+    throttle_classes = [AnonRateThrottle]
+
+    @swagger_auto_schema(
+        tags=['Authentication'],
+        operation_id='reset_password_request',
+        operation_summary="Request Password Reset",
+        operation_description="""
+        Initiate the password reset process by requesting an OTP.
+
+        ## Request Requirements:
+        - Either email or mobile must be provided
+
+        ## Process Flow:
+        1. User submits their email or mobile number
+        2. System validates the account exists
+        3. System generates and sends an OTP
+        4. User receives the OTP for the next step
+
+        ## Security Features:
+        - Rate limited to prevent brute force attempts
+        - Generic response messaging prevents account enumeration
+        - OTP has limited validity period (typically 10 minutes)
+        - Maximum 3 verification attempts per OTP
+
+        ## Next Steps:
+        After receiving the OTP, proceed to the /auth/reset-password/confirm/
+        endpoint to verify the OTP and set a new password.
+        """,
+        request_body=ResetPasswordRequestSerializer,
+        responses={
+            200: openapi.Response(
+                description="Password reset OTP sent",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Success message indicating OTP has \
+                                been sent",
+                        ),
+                    },
+                ),
+            ),
+            400: openapi.Response(
+                description="Validation error",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'detail': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Error details",
+                        ),
+                    },
+                ),
+            ),
+            429: openapi.Response(
+                description="Too many requests",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'detail': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Rate limit exceeded message",
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
+    def post(self, request):
+        """Request a password reset OTP.
+
+        Processes the password reset request by:
+        1. Validating the provided email or mobile
+        2. Checking if the user exists in the system
+        3. Generating and sending an OTP
+        4. Returning a success message
+
+        Args:
+        ----
+            request: HTTP request with email or mobile
+
+        Returns:
+        -------
+            Response: Result of password reset request with
+                     appropriate status code and message
+        """
+        try:
+            serializer = ResetPasswordRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors, status=status.HTTP_400_BAD_REQUEST
+                )
+
+            email = serializer.validated_data.get('email')
+            mobile = serializer.validated_data.get('mobile')
+
+            # Determine identifier and type
+            if email:
+                identifier = email
+                type_value = 'EMAIL'
+                user_exists = User.objects.filter(email=email).exists()
+            else:
+                identifier = mobile
+                type_value = 'PHONE'
+                user_exists = User.objects.filter(mobile=mobile).exists()
+
+            # If user doesn't exist, still return success message
+            # This prevents account enumeration
+            if not user_exists:
+                logger.warning(
+                    f"Password reset requested for non-existent user: \
+                        {identifier}"
+                )
+                return Response(
+                    {
+                        "message": _(
+                            "If an account exists with this identifier, a \
+                                password reset OTP has been sent."
+                        )
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            # Check for too frequent OTP requests
+            last_otp = (
+                OTP.objects.filter(
+                    identifier=identifier, purpose='RESET_PASSWORD'
+                )
+                .order_by('-created_at')
+                .first()
+            )
+
+            if (
+                last_otp
+                and (timezone.now() - last_otp.created_at).total_seconds() < 60
+            ):
+                return Response(
+                    {"detail": _("Please wait before requesting another OTP.")},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            # Generate and send OTP
+            otp = OTP.generate_otp(
+                identifier=identifier, type=type_value, purpose='RESET_PASSWORD'
+            )
+
+            # In a real implementation, you would send the OTP via email or \
+            # SMS here
+            # For now, we'll just log it
+            logger.info(
+                f"Password reset OTP generated for {identifier}: {otp.otp}"
+            )
+
+            return Response(
+                {
+                    "message": _(
+                        "If an account exists with this identifier, a password \
+                            reset OTP has been sent."
+                    )
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in reset password request: {str(e)}"
+            )
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return Response(
+                {"detail": _("An unexpected error occurred.")},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ResetPasswordConfirmView(APIView):
+    """API endpoint to complete the password reset process.
+
+    Validates the OTP received in the previous step and sets a new password
+    for the user's account. This is the second and final step in the
+    password reset flow.
+    """
+
+    permission_classes = [AllowAny]
+
+    @swagger_auto_schema(
+        tags=['Authentication'],
+        operation_id='reset_password_confirm',
+        operation_summary="Complete Password Reset",
+        operation_description="""
+        Complete the password reset process by verifying the OTP and setting
+        a new password.
+
+        ## Request Requirements:
+        - Either email or mobile must be provided
+        (same as used in the request step)
+        - Valid OTP code received via email or SMS
+        - New password that meets security requirements
+
+        ## Process Flow:
+        1. User submits the OTP and new password
+        2. System validates the OTP is correct and not expired
+        3. System updates the user's password
+        4. User is automatically logged in with new credentials
+
+        ## Security Features:
+        - OTP must be valid and not expired
+        - Maximum verification attempts enforced
+        - New password must meet security requirements
+        - Account is automatically verified if not already
+
+        ## Response:
+        Upon successful verification, the response includes:
+        - Success message
+        - New access token
+        - New refresh token
+        - User profile information
+
+        This completes the password reset process and automatically logs
+        in the user.
+        """,
+        request_body=ResetPasswordConfirmSerializer,
+        responses={
+            200: openapi.Response(
+                description="Password reset successful",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Success message",
+                        ),
+                        'access': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="JWT access token for authentication",
+                        ),
+                        'refresh': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="JWT refresh token",
+                        ),
+                        'user': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            description="User profile information",
+                        ),
+                    },
+                ),
+            ),
+            400: openapi.Response(
+                description="Invalid OTP or password validation error",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'detail': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Error details",
+                        ),
+                        'attempts_left': openapi.Schema(
+                            type=openapi.TYPE_INTEGER,
+                            description="Number of verification attempts \
+                                remaining",
+                        ),
+                    },
+                ),
+            ),
+            500: openapi.Response(
+                description="Server error",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'detail': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Error message",
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
+    def post(self, request):
+        """Confirm password reset with OTP and set new password.
+
+        Processes the password reset confirmation by:
+        1. Validating the provided OTP and new password
+        2. Checking if the OTP is valid and not expired
+        3. Setting the new password for the user
+        4. Generating authentication tokens for automatic login
+        5. Returning success response with tokens
+
+        Args:
+        ----
+            request: HTTP request with email/mobile, OTP, and new password
+
+        Returns:
+        -------
+            Response: Result of password reset with appropriate
+                     status code, message, and authentication tokens
+        """
+        try:
+            serializer = ResetPasswordConfirmSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors, status=status.HTTP_400_BAD_REQUEST
+                )
+
+            email = serializer.validated_data.get('email')
+            mobile = serializer.validated_data.get('mobile')
+            otp_code = serializer.validated_data['otp']
+            new_password = serializer.validated_data['new_password']
+
+            # Determine identifier
+            if email:
+                identifier = email
+            else:
+                identifier = mobile
+
+            # Find the active OTP record
+            otp_obj = (
+                OTP.objects.filter(
+                    identifier=identifier,
+                    purpose='RESET_PASSWORD',
+                    is_verified=False,
+                    expires_at__gt=timezone.now(),
+                )
+                .order_by('-created_at')
+                .first()
+            )
+
+            if not otp_obj:
+                return Response(
+                    {"detail": _("Invalid or expired OTP")},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Verify OTP
+            verified = otp_obj.verify(otp_code)
+
+            if not verified:
+                attempts_left = otp_obj.max_attempts - otp_obj.attempts
+
+                if attempts_left > 0:
+                    return Response(
+                        {
+                            "detail": _("Invalid OTP"),
+                            "attempts_left": attempts_left,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                else:
+                    return Response(
+                        {
+                            "detail": _(
+                                "Maximum verification attempts exceeded. \
+                                    Please request a new OTP."
+                            ),
+                            "attempts_left": 0,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            # Find the user and update password
+            try:
+                if email:
+                    user = User.objects.get(email=email)
+                else:
+                    user = User.objects.get(mobile=mobile)
+
+                # Reset password
+                user.set_password(new_password)
+
+                # Ensure user is verified
+                if not user.is_verified:
+                    user.is_verified = True
+
+                user.save()
+
+                logger.info(
+                    f"Password reset successfully for user: {identifier}"
+                )
+
+                # Generate tokens for automatic login
+                refresh = RefreshToken.for_user(user)
+
+                return Response(
+                    {
+                        "message": _("Password has been reset successfully."),
+                        "access": str(refresh.access_token),
+                        "refresh": str(refresh),
+                        "user": UserSerializerWithToken(user).data,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": _("User not found.")},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in reset password confirmation: {str(e)}"
+            )
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return Response(
+                {"detail": _("An unexpected error occurred.")},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class ResendOTPView(APIView):
+    """API endpoint for resending OTP codes.
+
+    Handles regeneration and resending of OTP codes for various purposes
+    like registration, login, password reset, and contact verification.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [AnonRateThrottle]
+
+    @swagger_auto_schema(
+        tags=['Authentication'],
+        operation_id='resend_otp',
+        operation_summary="Resend OTP",
+        operation_description="""
+        Resend OTP code for various purposes like registration, login, \
+            or password reset.
+
+        ## Request Requirements:
+        - Either email or mobile must be provided
+        - Purpose of the OTP (REGISTER, LOGIN, RESET_PASSWORD, etc.)
+
+        ## Process Flow:
+        1. Validates the request data
+        2. Checks if the user exists (for LOGIN/RESET_PASSWORD) or \
+            doesn't exist (for REGISTER)
+        3. Generates a new OTP
+        4. Sends the OTP to the specified email or mobile
+        5. Returns success message with verification instructions
+
+        ## Security Features:
+        - Rate limited to prevent abuse
+        - Minimum time between OTP requests enforced (60 seconds)
+        - Validates identifier exists or not based on purpose
+
+        ## Response:
+        - Success message with verification instructions
+        """,
+        request_body=ResendOTPSerializer,
+        responses={
+            200: openapi.Response(
+                description="OTP resent successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'message': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Success message",
+                        ),
+                    },
+                ),
+            ),
+            400: openapi.Response(
+                description="Validation error",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'detail': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Error details",
+                        ),
+                    },
+                ),
+            ),
+            429: openapi.Response(
+                description="Too many OTP requests",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'detail': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            description="Rate limit exceeded message",
+                        ),
+                    },
+                ),
+            ),
+        },
+    )
+    def post(self, request):
+        """Resends OTP code for verification.
+
+        Processes the OTP resend request by:
+        1. Validating the request data
+        2. Checking if a new OTP can be generated (time limit)
+        3. Generating and sending a new OTP
+        4. Returning success message
+
+        Args:
+        ----
+            request (Request): HTTP request with email/mobile and purpose
+
+        Returns:
+        -------
+            Response: Resend result
+                On success: HTTP 200 with success message
+                On validation error: HTTP 400 with error message
+                On rate limit: HTTP 429 with rate limit message
+        """
+        try:
+            serializer = ResendOTPSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(
+                    serializer.errors, status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Extract validated data
+            email = serializer.validated_data.get('email')
+            mobile = serializer.validated_data.get('mobile')
+            purpose = serializer.validated_data['purpose']
+
+            # Determine identifier and type
+            if email:
+                identifier = email
+                type_value = 'EMAIL'
+            else:
+                identifier = mobile
+                type_value = 'PHONE'
+
+            logger.info(
+                f"OTP resend requested for {identifier}, purpose: {purpose}"
+            )
+
+            # Check for too frequent OTP requests
+            last_otp = (
+                OTP.objects.filter(identifier=identifier, purpose=purpose)
+                .order_by('-created_at')
+                .first()
+            )
+
+            if (
+                last_otp
+                and (timezone.now() - last_otp.created_at).total_seconds() < 60
+            ):
+                logger.warning(f"Too frequent OTP request for {identifier}")
+                return Response(
+                    {"detail": _("Please wait before requesting another OTP.")},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+
+            # Generate and send new OTP
+            otp = OTP.generate_otp(
+                identifier=identifier, type=type_value, purpose=purpose
+            )
+
+            # In a real implementation, you would send the OTP via email or
+            # SMS here
+            # For now, we'll just log it
+            logger.info(
+                f"OTP resent for {identifier}, purpose: {purpose}, \
+                    OTP: {otp.otp}"
+            )
+
+            return Response(
+                {"message": _("OTP sent successfully. Please verify.")},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error in resend OTP: {str(e)}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return Response(
+                {"detail": _("An unexpected error occurred.")},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

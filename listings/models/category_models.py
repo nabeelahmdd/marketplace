@@ -1,8 +1,23 @@
+import uuid
+
 from django.db import models
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 
 from core.models import BaseModel
+
+
+def generate_unique_slug(instance, new_slug=None):
+    """Generate a unique slug using the title and a short UUID if needed."""
+    slug = new_slug if new_slug else slugify(instance.name)
+    ModelClass = instance.__class__
+
+    # Check if the slug already exists
+    if ModelClass.objects.filter(slug=slug).exists():
+        unique_id = str(uuid.uuid4())[:8]  # Short UUID
+        slug = f"{slug}-{unique_id}"
+
+    return slug
 
 
 class Category(BaseModel):
@@ -135,7 +150,7 @@ class Category(BaseModel):
     def save(self, *args, **kwargs):
         """Override save method to generate slug and handle data."""
         if not self.slug:
-            self.slug = slugify(self.name)
+            self.slug = generate_unique_slug(self)
 
         # Ensure meta name defaults to category name if not provided
         if not self.meta_name:

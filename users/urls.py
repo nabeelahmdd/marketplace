@@ -2,65 +2,59 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .views import (
-    ActivateUserView,
+    ChangeEmailView,
+    ChangeMobileView,
     ChangePasswordView,
     DeleteUserView,
     LoginView,
-    OTPLoginView,
-    OTPRegisterView,
-    PasswordResetConfirmView,
-    PasswordResetRequestView,
+    LogoutView,
     RegisterView,
-    RequestEmailOTPView,
-    RequestPhoneOTPView,
+    ResendOTPView,
+    ResetPasswordConfirmView,
+    ResetPasswordRequestView,
+    SellerProfileView,
+    SellerVerificationFileDetailView,
+    SellerVerificationFileView,
     SocialAccountDisconnectView,
     SocialAccountsView,
-    SocialLoginTemplateView,
     SocialLoginView,
     UserProfileView,
     VerifyOTPView,
 )
 
 urlpatterns = [
-    # Authentication
-    path('login/', LoginView.as_view(), name='login'),
-    path('register/', RegisterView.as_view(), name='register'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    # User Management
-    path('profile/', UserProfileView.as_view(), name='profile'),
+    # Authentication endpoints
+    path('auth/register/', RegisterView.as_view(), name='register'),
+    path('auth/login/', LoginView.as_view(), name='login'),
+    path('auth/logout/', LogoutView.as_view(), name='logout'),
+    path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # OTP verification endpoints
+    path('auth/verify-otp/', VerifyOTPView.as_view(), name='verify_otp'),
+    path('auth/resend-otp/', ResendOTPView.as_view(), name='resend_otp'),
+    # Password management
+    path(
+        'auth/reset-password/',
+        ResetPasswordRequestView.as_view(),
+        name='reset_password_request',
+    ),
+    path(
+        'auth/reset-password/confirm/',
+        ResetPasswordConfirmView.as_view(),
+        name='reset_password_confirm',
+    ),
+    path(
+        'user/change-password/',
+        ChangePasswordView.as_view(),
+        name='change_password',
+    ),
+    # User profile management
+    path('user/profile/', UserProfileView.as_view(), name='user_profile'),
     path('delete-account/', DeleteUserView.as_view(), name='delete-account'),
+    # User contact information management
+    path('auth/change-email/', ChangeEmailView.as_view(), name='change_email'),
     path(
-        'change-password/', ChangePasswordView.as_view(), name='change-password'
+        'auth/change-mobile/', ChangeMobileView.as_view(), name='change_mobile'
     ),
-    # Password Reset
-    path(
-        'password-reset/request/',
-        PasswordResetRequestView.as_view(),
-        name='password-reset-request',
-    ),
-    path(
-        'password-reset/confirm/',
-        PasswordResetConfirmView.as_view(),
-        name='password-reset-confirm',
-    ),
-    # Account activation URL
-    path('activate/', ActivateUserView.as_view(), name='activate-account'),
-    # OTP Generation
-    path(
-        'otp/phone/request/',
-        RequestPhoneOTPView.as_view(),
-        name='request-phone-otp',
-    ),
-    path(
-        'otp/email/request/',
-        RequestEmailOTPView.as_view(),
-        name='request-email-otp',
-    ),
-    # OTP Verification
-    path('otp/verify/', VerifyOTPView.as_view(), name='verify-otp'),
-    # OTP-based Authentication
-    path('otp/register/', OTPRegisterView.as_view(), name='otp-register'),
-    path('otp/login/', OTPLoginView.as_view(), name='otp-login'),
     # Social Authentication
     path('auth/social/login/', SocialLoginView.as_view(), name='social-login'),
     path(
@@ -73,9 +67,17 @@ urlpatterns = [
         SocialAccountDisconnectView.as_view(),
         name='social-disconnect',
     ),
+    # Seller profile endpoints
+    path('seller/profile/', SellerProfileView.as_view(), name='seller_profile'),
+    # Verification file endpoints
     path(
-        'social_signin_template/',
-        SocialLoginTemplateView.as_view(),
-        name="'social_signin_template",
+        'seller/verification-files/',
+        SellerVerificationFileView.as_view(),
+        name='verification_files',
+    ),
+    path(
+        'seller/verification-files/<uuid:file_id>/',
+        SellerVerificationFileDetailView.as_view(),
+        name='verification_file_detail',
     ),
 ]

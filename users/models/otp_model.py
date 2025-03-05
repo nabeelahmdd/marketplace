@@ -25,6 +25,7 @@ class OTP(models.Model):
         ('LOGIN', _('Login')),
         ('RESET_PASSWORD', _('Reset Password')),
         ('VERIFY_NEW_PHONE', _('Verify New Phone')),
+        ('VERIFY_NEW_EMAIL', _('Verify New Email')),
     )
 
     identifier = models.CharField(

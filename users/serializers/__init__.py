@@ -17,3 +17,9 @@ from .social_auth_serializers import(
     SocialAccountSerializer,
     SocialAccountDisconnectSerializer
 )
+
+from .seller_serializers import(
+    SellerSerializer,
+    SellerDetailSerializer,
+    SellerVerificationFileSerializer,
+)

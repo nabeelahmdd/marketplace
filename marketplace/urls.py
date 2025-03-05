@@ -43,7 +43,7 @@ urlpatterns = [
         name='schema-redoc',
     ),
     path('api/users/', include('users.urls')),
-    path('api/shop/', include('shop.urls')),
+    path('api/listings/', include('listings.urls')),
 ]
 
 # Add static handling

@@ -4,7 +4,7 @@ from django.contrib.auth.models import Group
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 
-from .models import OTP, User
+from .models import OTP, Seller, SellerVerificationFile, User
 
 
 @admin.register(User)
@@ -31,11 +31,12 @@ class CustomUserAdmin(BaseUserAdmin):
         'email',
         'mobile',
         'get_full_name_display',
-        'is_seller',
-        'is_super_admin',
+        'is_superuser',
         'is_active',
+        'is_verified',
+        'is_seller',
         'last_login',
-        'created_on',
+        'created_at',
         'profile_image_preview',
     )
 
@@ -47,46 +48,38 @@ class CustomUserAdmin(BaseUserAdmin):
 
     # Bulk editable fields
     list_editable = (
-        'is_seller',
-        'is_super_admin',
+        'is_superuser',
         'is_active',
+        'is_verified',
     )
 
     # Search and filter configuration
     search_fields = (
         'email',
         'mobile',
-        'first_name',
-        'last_name',
-        'country_code',
+        'name',
     )
     list_filter = (
-        'is_seller',
-        'is_super_admin',
+        'is_superuser',
         'is_active',
         'is_staff',
-        'gender',
-        'cr_by_self',
-        'account_verified',
-        'created_on',
+        'created_at',
     )
 
     # Sorting configuration
-    ordering = ('-created_on',)
+    ordering = ('-created_at',)
 
     # Read-only fields
     readonly_fields = (
-        'created_on',
-        'updated_on',
+        'created_at',
+        'updated_at',
         'profile_image_preview',
         'last_login',
-        'last_login_ip',
         'id',
-        'cr_by_self',
     )
 
     # Date hierarchy for navigation
-    date_hierarchy = 'created_on'
+    date_hierarchy = 'created_at'
 
     # Fieldsets for editing existing users
     fieldsets = (
@@ -95,14 +88,10 @@ class CustomUserAdmin(BaseUserAdmin):
             {
                 'fields': (
                     'id',
-                    'first_name',
-                    'last_name',
+                    'name',
                     'email',
-                    'country_code',
                     'mobile',
-                    'gender',
-                    'dob',
-                    'profile_pic',
+                    'profile_image',
                     'profile_image_preview',
                 )
             },
@@ -112,11 +101,8 @@ class CustomUserAdmin(BaseUserAdmin):
             {
                 'fields': (
                     'is_active',
-                    'is_seller',
-                    'is_super_admin',
                     'is_staff',
                     'is_superuser',
-                    'account_verified',
                     'user_permissions',
                 )
             },
@@ -126,14 +112,11 @@ class CustomUserAdmin(BaseUserAdmin):
             {
                 'fields': (
                     'password',
-                    'is_password_reset_link_sent',
-                    'cr_by_self',
                     'last_login',
-                    'last_login_ip',
                 )
             },
         ),
-        (_('Timestamps'), {'fields': ('created_on', 'updated_on')}),
+        (_('Timestamps'), {'fields': ('created_at', 'updated_at')}),
     )
 
     # Fieldsets for adding new users
@@ -145,16 +128,12 @@ class CustomUserAdmin(BaseUserAdmin):
                 'fields': (
                     'email',
                     'mobile',
-                    'country_code',
-                    'first_name',
-                    'last_name',
+                    'name',
                     'password1',
                     'password2',
                     'is_active',
-                    'is_seller',
-                    'is_super_admin',
+                    'is_superuser',
                     'is_staff',
-                    'account_verified',
                 ),
             },
         ),
@@ -171,11 +150,11 @@ class CustomUserAdmin(BaseUserAdmin):
         -------
             str: HTML for image display or placeholder text
         """
-        if obj.profile_pic:
+        if obj.profile_image:
             return format_html(
                 '<img src="{}" style="height:40px; width:40px; '
                 'border-radius:50%; object-fit:cover;" />',
-                obj.profile_pic.url,
+                obj.profile_image.url,
             )
         return format_html(
             '<div style="height:40px; width:40px; border-radius:50%; '
@@ -196,30 +175,12 @@ class CustomUserAdmin(BaseUserAdmin):
         -------
             str: Full name or placeholder
         """
-        full_name = obj.get_full_name()
+        full_name = obj.name
         if full_name and full_name != obj.email:
             return full_name
         return "-"
 
     get_full_name_display.short_description = _('Full Name')
-
-    def save_model(self, request, obj, form, change):
-        """Override save_model to set created_by for new users.
-
-        Args:
-        ----
-            request: The HTTP request
-            obj (User): The user object being saved
-            form: The form instance
-            change (bool): Whether this is a change to an existing object
-        """
-        if not change:  # If creating a new user
-            # Set created_by to current admin user
-            # Assuming BaseModel has created_by field
-            if hasattr(obj, 'created_by'):
-                obj.created_by = request.user
-
-        super().save_model(request, obj, form, change)
 
     def get_queryset(self, request):
         """Override get_queryset to optimize database queries.
@@ -273,15 +234,11 @@ class CustomUserAdmin(BaseUserAdmin):
 
         # If editing superuser and current user is not superuser
         if obj and obj.is_superuser and not request.user.is_superuser:
-            readonly_fields.extend(
-                ['is_superuser', 'is_staff', 'is_super_admin']
-            )
+            readonly_fields.extend(['is_superuser', 'is_staff'])
 
         # If editing own account, prevent self-demotion
         if obj and obj == request.user:
-            readonly_fields.extend(
-                ['is_active', 'is_superuser', 'is_staff', 'is_super_admin']
-            )
+            readonly_fields.extend(['is_active', 'is_superuser', 'is_staff'])
 
         return tuple(readonly_fields)
 
@@ -318,3 +275,7 @@ class OTPAdmin(admin.ModelAdmin):
         ),
         ('Timestamps', {'fields': ('created_at', 'expires_at')}),
     )
+
+
+admin.site.register(Seller)
+admin.site.register(SellerVerificationFile)

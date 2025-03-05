@@ -1,285 +1,207 @@
-from django.contrib.auth.base_user import BaseUserManager
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import (
+    AbstractBaseUser,
+    BaseUserManager,
+    PermissionsMixin,
+)
+from django.contrib.gis.db.models import PointField
 from django.db import models
-from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 
 from core.models import BaseModel
-from utils import validate_phone_number
 
 
+# ============================
+# CUSTOM USER MANAGEMENT
+# ============================
 class CustomUserManager(BaseUserManager):
-    """Custom user model manager where email is the unique identifier for
-    authentication.
-
-    This manager overrides the default Django user manager to use email
-    instead of username as the primary identifier for user authentication and
-    creation processes.
-
-    Implements specialized methods for:
-    - Creating standard users with email-based authentication
-    - Creating superusers with administrative privileges
-    - Handling proper email normalization
-    - Setting appropriate default permissions
+    """Custom user model manager that supports authentication with either \
+    email or mobile.
     """
 
-    def create_user(self, email, password=None, **extra_fields):
-        """Create and save a user with the given email and password.
+    def create_user(
+        self, name, password=None, email=None, mobile=None, **extra_fields
+    ):
+        """Create and return a user who can register using either email \
+            or mobile.
 
         Args:
         ----
-            email (str): User's email address (required)
-            password (str, optional): User's password
-            **extra_fields: Additional fields to be saved in the User model
+            name (str): Full name of the user.
+            password (str, optional): User's password.
+            email (str, optional): User's email (must be unique if provided).
+            mobile (str, optional): User's mobile number\
+                  (must be unique if provided).
+            **extra_fields: Additional attributes for the user.
 
         Returns:
         -------
-            User: The created user instance
+            User: The created user instance.
 
         Raises:
         ------
-            ValueError: If email is not provided
+            ValueError: If neither email nor mobile is provided.
         """
-        if not email:
-            raise ValueError(_("Email must be set"))
+        if not email and not mobile:
+            raise ValueError("Either email or mobile must be provided.")
 
-        email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
+        if email:
+            email = self.normalize_email(email)
+
+        user = self.model(name=name, email=email, mobile=mobile, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
-        """Create and save a SuperUser with the given email and password.
-
-        Args:
-        ----
-            email (str): SuperUser's email address (required)
-            password (str, optional): SuperUser's password
-            **extra_fields: Additional fields to be saved in the User model
-
-        Returns:
-        -------
-            User: The created superuser instance
-
-        Raises:
-        ------
-            ValueError: If staff or superuser status is not True
-        """
+    def create_superuser(
+        self, name, password, email=None, mobile=None, **extra_fields
+    ):
+        """Create and return a superuser with administrative privileges."""
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
-        extra_fields.setdefault("is_active", True)
-        extra_fields.setdefault(
-            "is_super_admin", True
-        )  # Set super_admin flag for superusers
-
-        if not extra_fields["is_staff"]:
-            raise ValueError(_("Superuser must have is_staff=True."))
-        if not extra_fields["is_superuser"]:
-            raise ValueError(_("Superuser must have is_superuser=True."))
-
-        return self.create_user(email, password, **extra_fields)
+        return self.create_user(
+            name, password, email=email, mobile=mobile, **extra_fields
+        )
 
 
-class User(AbstractUser, BaseModel):
-    """Custom User model using email as the primary identifier.
+class User(AbstractBaseUser, PermissionsMixin, BaseModel):
+    """Custom User model that allows authentication with either email or mobile.
 
-    This model extends Django's AbstractUser and replaces username-based auth
-    with email-based authentication. It includes comprehensive user profile
-    fields and role-based permission flags for access control.
+    Attributes
+    ----------
+    - `name` (CharField): Full name of the user.
+    - `email` (EmailField, optional): Unique email identifier (nullable).
+    - `mobile` (CharField, optional): Unique phone number identifier (nullable).
+    - `profile_image` (ImageField): Optional profile image.
+    - `location` (PointField): Geographical location.
+    - `is_verified` (BooleanField): Verification status.
+    - `is_seller` (BooleanField): Seller status flag.
+    - `is_staff` (BooleanField): Admin panel access.
+    - `date_joined` (DateTimeField): User registration timestamp.
 
-    ## Core Features:
-    - Email-based authentication (no username field)
-    - Mobile number as secondary identifier
-    - Profile information storage with optional fields
-    - Role-based access control flags
-    - Security tracking for authentication events
-
-    ## Field Categories:
-    - Authentication fields: email, mobile, country_code
-    - Profile fields: first_name, last_name, profile_pic, gender, dob
-    - Role flags: is_super_admin, is_seller
-    - Security fields: is_password_reset_link_sent, last_login_ip
-    - System fields: created_on, updated_on, is_active
-
-    ## Notes:
-    - Both email and mobile are indexed for performance
-    - Mobile number requires country_code for full phone number
-    - Extends Django's built-in authentication framework
-    - Profile completeness can be checked with is_complete_profile
+    **One of `email` or `mobile` must be provided.**
     """
+
+    name = models.CharField(max_length=150)
+    email = models.EmailField(unique=True, null=True, blank=True)
+    mobile = models.CharField(max_length=15, unique=True, null=True, blank=True)
+    profile_image = models.ImageField(
+        upload_to='users/profiles/', blank=True, null=True
+    )
+    location = PointField(blank=True, null=True)
+    is_verified = models.BooleanField(default=False)
+    is_staff = models.BooleanField(default=False)
+    is_seller = models.BooleanField(default=False)
+    date_joined = models.DateTimeField(default=timezone.now)
 
     objects = CustomUserManager()
 
-    GENDER_CHOICES = (
-        ("M", _("Male")),
-        ("F", _("Female")),
-        ("O", _("Other")),
-        ("P", _("Prefer not to say")),
-    )
-
-    username = None  # Remove default username field
-    first_name = models.CharField(
-        _("First name"),
-        max_length=128,
-        null=True,
-        blank=True,
-        help_text=_("User's first name"),
-    )
-    last_name = models.CharField(
-        _("Last name"),
-        max_length=128,
-        null=True,
-        blank=True,
-        help_text=_("User's last name"),
-    )
-    profile_pic = models.ImageField(
-        _("Profile picture"),
-        upload_to="profile_pics/%Y/%m/",  # Organize by year/month
-        null=True,
-        blank=True,
-        help_text=_("User's profile picture"),
-    )
-
-    country_code = models.CharField(
-        _("Country code"),
-        max_length=10,
-        null=True,
-        blank=True,
-        help_text=_("Country code for mobile number (e.g., +1, +91)"),
-    )
-    mobile = models.CharField(
-        _("Mobile number"),
-        max_length=20,
-        unique=True,
-        validators=[validate_phone_number],
-        null=True,
-        blank=True,
-        help_text=_("Primary mobile number used for authentication"),
-    )
-    email = models.EmailField(
-        _("Email address"),
-        unique=True,
-        db_index=True,
-        help_text=_("Email address for login and communication"),
-    )
-    gender = models.CharField(
-        _("Gender"),
-        max_length=1,
-        choices=GENDER_CHOICES,
-        null=True,
-        blank=True,
-        help_text=_("User's gender"),
-    )
-    dob = models.DateField(
-        _("Date of Birth"),
-        null=True,
-        blank=True,
-        help_text=_("User's date of birth"),
-    )
-
-    # Role-based fields
-    is_super_admin = models.BooleanField(
-        _("Super admin status"),
-        default=False,
-        help_text=_("Designates whether the user has super admin privileges"),
-    )
-    is_seller = models.BooleanField(
-        _("Seller status"),
-        default=False,
-        help_text=_("Designates whether the user is a seller"),
-    )
-    cr_by_self = models.BooleanField(
-        _("Self-created account"),
-        default=False,
-        help_text=_("Indicates if the user created their own account"),
-    )
-    is_password_reset_link_sent = models.BooleanField(
-        _("Password reset link sent"),
-        default=False,
-        help_text=_("Flag indicating if a password reset link has been sent"),
-    )
-    last_login_ip = models.GenericIPAddressField(
-        _("Last login IP"),
-        null=True,
-        blank=True,
-        help_text=_("IP address of the user's last login"),
-    )
-    account_verified = models.BooleanField(
-        _("Account verified"),
-        default=False,
-        help_text=_("Indicates if the user's account has been verified"),
-    )
-
-    # Set email as the primary authentication field
-    USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = ["mobile"]  # Mobile is required but not primary
+    # Authentication field (must be set dynamically)
+    USERNAME_FIELD = 'email'  # Default to email
+    REQUIRED_FIELDS = ['name']
 
     class Meta:
-        verbose_name = _("user")
-        verbose_name_plural = _("users")
-        indexes = [
-            models.Index(fields=["email"], name="email_idx"),
-            models.Index(fields=["mobile"], name="mobile_idx"),
-            models.Index(fields=["created_on"], name="user_created_idx"),
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(email__isnull=False)
+                    | models.Q(mobile__isnull=False)
+                ),
+                name="user_email_or_mobile_required",
+            )
         ]
-        ordering = ["-created_on"]  # Assuming BaseModel has created_on
 
     def __str__(self):
-        """String representation of the user."""
-        return f"{self.get_full_name()} ({self.email})"
-
-    def get_full_name(self):
-        """Returns the user's full name.
-
-        Returns
-        -------
-            str: First name and last name, with a space in between
-        """
-        return (
-            f"{self.first_name or ''} {self.last_name or ''}".strip()
-            or self.email
-        )
-
-    def get_short_name(self):
-        """Returns the user's short name.
-
-        Returns
-        -------
-            str: The user's first name if available, otherwise email
-        """
-        return f"{self.first_name or self.email}"
-
-    def has_perm(self, perm, obj=None):
-        """Check if the user has a specific permission.
-
-        Super admins automatically have all permissions.
-
-        Args:
-        ----
-            perm (str): The permission to check
-            obj (Model, optional): The object to check permissions against
-
-        Returns:
-        -------
-            bool: True if the user has the permission, False otherwise
-        """
-        # Super admins have all permissions
-        if self.is_super_admin:
-            return True
-        # Otherwise use the default permission system
-        return super().has_perm(perm, obj)
+        return self.name or self.email or self.mobile
 
     @property
-    def is_complete_profile(self):
-        """Check if the user has completed their profile.
+    def seller_profile(self):
+        """Returns the associated Seller instance if the user is a seller"""
+        return getattr(self, 'seller', None)
 
-        Returns
-        -------
-            bool: True if all required profile fields are filled
-        """
-        return bool(
-            self.first_name
-            and self.last_name
-            and self.mobile
-            and self.country_code
-        )
+
+# ============================
+# SELLER & VERIFICATION MODELS
+# ============================
+class Seller(BaseModel):
+    """Model representing a seller in the marketplace.
+
+    Attributes
+    ----------
+    - `user` (OneToOneField): Links to the User model.
+    - `name` (CharField): Seller name.
+    - `id_number` (CharField): National ID or government-issued ID.
+    - `mobile` (CharField): Contact number.
+    - `is_company` (BooleanField): Whether seller is an individual or company.
+    - `owner_name` (CharField): For companies, owner's name.
+    - `address` (CharField): Physical address of the seller.
+    """
+
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name='seller'
+    )
+    name = models.CharField(max_length=150, blank=True)
+    id_number = models.CharField(max_length=150, blank=True)
+    mobile = models.CharField(max_length=15, unique=True, blank=True, null=True)
+    is_company = models.BooleanField(default=False)
+    owner_name = models.CharField(max_length=150, blank=True, null=True)
+    address = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return self.name or self.user.username
+
+
+class SellerVerificationFile(BaseModel):
+    """Verification documents uploaded by sellers.
+
+    Attributes
+    ----------
+    - `seller` (ForeignKey): Reference to the seller.
+    - `file` (FileField): Verification document.
+    """
+
+    seller = models.ForeignKey(
+        Seller, on_delete=models.CASCADE, related_name='verification_files'
+    )
+    file = models.FileField(upload_to="seller/verification/")
+
+    def __str__(self):
+        return f"Verification File for \
+            {self.seller.name or self.seller.user.username}"
+
+
+class UserFollow(models.Model):
+    """Track which users follow other users"""
+
+    follower = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='following'
+    )
+    followed = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='followers'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('follower', 'followed')
+
+    def __str__(self):
+        return f"{self.follower.username} follows {self.followed.username}"
+
+
+class UserDevice(models.Model):
+    """Track user devices for push notifications"""
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='devices'
+    )
+    device_id = models.CharField(max_length=255)
+    device_type = models.CharField(
+        max_length=20,
+        choices=[('ios', 'iOS'), ('android', 'Android'), ('web', 'Web')],
+    )
+    push_token = models.CharField(max_length=255, blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'device_id')
