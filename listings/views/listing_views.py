@@ -1,12 +1,16 @@
 from django.db.models import F
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import filters, viewsets
+from rest_framework import filters, mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from listings.models import Listing
-from listings.serializers import ListingDetailSerializer, ListingSerializer
+from listings.models import Listing, ListingImage
+from listings.serializers import (
+    ListingDetailSerializer,
+    ListingImageSerializer,
+    ListingSerializer,
+)
 from utils import IsSellerPermission
 
 
@@ -132,3 +136,23 @@ class ListingViewSet(viewsets.ModelViewSet):
         listing.increment_view_count()
         listing.refresh_from_db()
         return Response({"view_count": listing.view_count})
+
+
+class ListingImageViewSet(
+    mixins.CreateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet
+):
+    """API endpoint for managing Listing Images.
+
+    Provides endpoints for creating and deleting ListingImage objects.
+    The image list is already available via the Listing endpoint.
+    """
+
+    serializer_class = ListingImageSerializer
+    permission_classes = [IsSellerPermission]
+
+    def get_queryset(self):
+        return ListingImage.objects.filter(
+            listing__is_active=True,
+            listing__is_deleted=False,
+            listing__seller__user=self.request.user,
+        )

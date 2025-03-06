@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import Category, Listing, Tag
+from .models import Category, Listing, ListingImage, Tag
 
 
 @admin.register(Category)
@@ -191,3 +191,6 @@ class ListingAdmin(admin.ModelAdmin):
         return "-"
 
     image_preview.short_description = 'Image Preview'
+
+
+admin.site.register(ListingImage)

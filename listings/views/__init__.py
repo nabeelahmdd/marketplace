@@ -1,2 +1,4 @@
 from .category_views import CategoryListView
-from .listing_views import ListingViewSet
+from .listing_views import (
+    ListingViewSet, ListingImageViewSet
+)
