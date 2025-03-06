@@ -134,12 +134,6 @@ package-lock.json
 # For vscode editor packages
 .vscode
 .idea
-common/
-fixture/
-messaging/
-moderation/
-notifications/
-payments/
 # WebViewer/
 
 upload_static_file.py
