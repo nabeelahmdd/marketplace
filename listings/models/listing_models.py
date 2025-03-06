@@ -87,6 +87,8 @@ class Listing(BaseModel):
     published_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
 
+    is_featured = models.BooleanField(default=False)
+
     class Meta:
         indexes = [
             models.Index(fields=['category', 'status']),

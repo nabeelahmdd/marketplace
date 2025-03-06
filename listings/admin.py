@@ -119,13 +119,19 @@ class ListingAdmin(admin.ModelAdmin):
         'title',
         'seller',
         'category',
+        'is_active',
+        'is_featured',
         'status',
         'price',
         'image_preview',
         'created_at',
     )
     list_display_links = ('title',)  # Title is clickable to edit
-    list_editable = ('status',)  # ✅ Ensure it's a tuple
+    list_editable = (
+        'status',
+        'is_active',
+        'is_featured',
+    )  # ✅ Ensure it's a tuple
 
     search_fields = (
         'title',
