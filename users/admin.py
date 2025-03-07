@@ -88,6 +88,7 @@ class CustomUserAdmin(BaseUserAdmin):
             {
                 'fields': (
                     'id',
+                    'username',
                     'name',
                     'email',
                     'mobile',

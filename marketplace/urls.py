@@ -44,6 +44,7 @@ urlpatterns = [
     ),
     path('api/users/', include('users.urls')),
     path('api/listings/', include('listings.urls')),
+    path('api-auth/', include('rest_framework.urls')),
 ]
 
 # Add static handling

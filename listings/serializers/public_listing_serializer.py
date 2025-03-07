@@ -1,4 +1,3 @@
-from django.db import models
 from django.utils import timezone
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
@@ -45,15 +44,16 @@ class PublicListingSerializer(serializers.ModelSerializer):
         read_only=True,
         help_text="Username of the seller",
     )
-    seller_rating = serializers.SerializerMethodField(
-        help_text="Average rating of the seller (0-5 scale)"
-    )
+    # seller_rating = serializers.SerializerMethodField(
+    #     help_text="Average rating of the seller (0-5 scale)"
+    # )
     is_favorited = serializers.SerializerMethodField(
         help_text="Whether the current user has favorited this listing"
     )
     days_until_expiry = serializers.SerializerMethodField(
         help_text="Number of days until this listing expires"
     )
+    distance = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
@@ -80,7 +80,7 @@ class PublicListingSerializer(serializers.ModelSerializer):
             'favorite_count',
             'is_featured',
             'seller_name',
-            'seller_rating',
+            # 'seller_rating',
             'is_favorited',
             'published_at',
             'days_until_expiry',
@@ -141,24 +141,32 @@ class PublicListingSerializer(serializers.ModelSerializer):
             )
         return None
 
-    @swagger_serializer_method(serializer_or_field=serializers.FloatField)
-    def get_seller_rating(self, obj):
-        """Get the average rating of the seller.
+    def get_distance(self, obj):
+        """Convert distance annotation to kilometers"""
+        if hasattr(obj, 'distance'):
+            # Convert the Distance object to kilometers
+            return obj.distance.km  # This gives you kilometers directly
+        return None
 
-        Args:
-        ----
-            obj (Listing): Listing object
+    # @swagger_serializer_method(serializer_or_field=serializers.FloatField)
+    # def get_seller_rating(self, obj):
+    #     """Get the average rating of the seller.
 
-        Returns:
-        -------
-            float: Average seller rating or 0.0
-        """
-        return (
-            obj.seller.ratings.all().aggregate(avg_rating=models.Avg('value'))[
-                'avg_rating'
-            ]
-            or 0.0
-        )
+    #     Args:
+    #     ----
+    #         obj (Listing): Listing object
+
+    #     Returns:
+    #     -------
+    #         float: Average seller rating or 0.0
+    #     """
+    #     return (
+    #         obj.seller.ratings.all().aggregate(
+    # avg_rating=models.Avg('value'))[
+    #             'avg_rating'
+    #         ]
+    #         or 0.0
+    #     )
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField)
     def get_is_favorited(self, obj):

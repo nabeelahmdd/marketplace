@@ -27,7 +27,11 @@ router.register(
 urlpatterns = [
     path('categories/', CategoryListView.as_view(), name='category-list'),
     path('', include(router.urls)),
-    path('api/listings/', PublicListingListView.as_view(), name='listing-list'),
+    path(
+        'api/public-listings/',
+        PublicListingListView.as_view(),
+        name='listing-list',
+    ),
     path(
         'api/listings/<slug:slug>/',
         ListingDetailView.as_view(),

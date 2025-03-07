@@ -7,6 +7,7 @@ from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import filters, generics, status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -14,6 +15,7 @@ from rest_framework.views import APIView
 from listings.models import (
     Category,
     Comment,
+    Favorite,
     Listing,
     RecommendedListing,
     SavedSearch,
@@ -27,7 +29,7 @@ from listings.serializers import (
 )
 
 
-class StandardResultsPagination:
+class StandardResultsPagination(PageNumberPagination):
     """Standard pagination for marketplace listings.
 
     Provides configurable page-based pagination.
@@ -35,7 +37,7 @@ class StandardResultsPagination:
 
     page_size = 20
     page_size_query_param = 'page_size'
-    max_page_size = 100
+    max_page_size = 1000
 
 
 class PublicListingListView(generics.ListAPIView):
@@ -145,6 +147,7 @@ class PublicListingListView(generics.ListAPIView):
         responses={200: PublicListingSerializer(many=True)},
     )
     def get(self, request, *args, **kwargs):
+        print('session_cookie', request.COOKIES.get('sessionid'))
         """Get a filtered and sorted list of marketplace listings.
 
         Supports comprehensive filtering and geo-location sorting.
@@ -355,6 +358,7 @@ class PublicListingListView(generics.ListAPIView):
         user_lng = self.request.query_params.get('longitude')
         radius = self.request.query_params.get('radius')  # in kilometers
 
+        # In your view code
         if user_lat and user_lng:
             try:
                 user_lat = float(user_lat)
@@ -427,13 +431,21 @@ class PublicListingListView(generics.ListAPIView):
             list: List of category IDs including parent and all children
         """
         try:
-            # This assumes there's a way to get child categories
+            # Get the category
             category = Category.objects.get(id=category_id)
-            # Assuming there's a method to get all descendants
-            descendants = category.get_descendants(include_self=True)
-            return [cat.id for cat in descendants]
+
+            # Get all subcategories recursively using the method from your model
+            subcategories = category.get_all_subcategories()
+
+            # Return list of IDs including the parent category
+            result = [category.id]
+            result.extend([subcat.id for subcat in subcategories])
+
+            return result
+
         except Category.DoesNotExist:
-            return [category_id]  # Return just the original ID if not found
+            # Return just the original ID if category doesn't exist
+            return [category_id]
 
     def get_serializer_context(self):
         """Add request to serializer context for building absolute URLs.
@@ -1085,9 +1097,6 @@ class FavoriteListingView(APIView):
         try:
             listing = Listing.objects.get(slug=slug)
 
-            # Check if already favorited
-            from users.models import Favorite
-
             favorite, created = Favorite.objects.get_or_create(
                 user=request.user, listing=listing, defaults={'is_active': True}
             )
@@ -1157,8 +1166,6 @@ class UnfavoriteListingView(APIView):
         """
         try:
             listing = Listing.objects.get(slug=slug)
-
-            from users.models import Favorite
 
             try:
                 favorite = Favorite.objects.get(

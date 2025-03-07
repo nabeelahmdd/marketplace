@@ -1,7 +1,18 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import Category, Listing, ListingImage, Tag
+from .models import (
+    Category,
+    Comment,
+    Favorite,
+    Listing,
+    ListingImage,
+    Rating,
+    RecommendedListing,
+    SavedSearch,
+    SearchQuery,
+    Tag,
+)
 
 
 @admin.register(Category)
@@ -200,3 +211,9 @@ class ListingAdmin(admin.ModelAdmin):
 
 
 admin.site.register(ListingImage)
+admin.site.register(Favorite)
+admin.site.register(Comment)
+admin.site.register(Rating)
+admin.site.register(SearchQuery)
+admin.site.register(SavedSearch)
+admin.site.register(RecommendedListing)

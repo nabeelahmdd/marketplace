@@ -1,3 +1,5 @@
+import uuid
+
 from django.contrib.auth.models import (
     AbstractBaseUser,
     BaseUserManager,
@@ -82,6 +84,9 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
     """
 
     name = models.CharField(max_length=150)
+    username = models.CharField(
+        max_length=150, unique=True, null=True, blank=True
+    )
     email = models.EmailField(unique=True, null=True, blank=True)
     mobile = models.CharField(max_length=15, unique=True, null=True, blank=True)
     profile_image = models.ImageField(
@@ -96,7 +101,7 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
     objects = CustomUserManager()
 
     # Authentication field (must be set dynamically)
-    USERNAME_FIELD = 'email'  # Default to email
+    USERNAME_FIELD = 'username'  # Default to email
     REQUIRED_FIELDS = ['name']
 
     class Meta:
@@ -109,6 +114,26 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
                 name="user_email_or_mobile_required",
             )
         ]
+
+    def save(self, *args, **kwargs):
+        """Generate a unique username if not set."""
+        if not self.username:
+            base_username = (
+                self.email or self.mobile or self.name.replace(" ", "").lower()
+            )
+            if base_username:
+                username = base_username
+                counter = 1
+                while User.objects.filter(username=username).exists():
+                    username = f"{base_username}{counter}"
+                    counter += 1
+                self.username = username
+            else:
+                self.username = str(uuid.uuid4())[
+                    :8
+                ]  # Fallback in case nothing is available
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name or self.email or self.mobile
