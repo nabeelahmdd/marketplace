@@ -141,14 +141,20 @@ WSGI_APPLICATION = 'marketplace.wsgi.application'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
 DATABASE_CRADENTIAL = config['DATABASE']
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.contrib.gis.db.backends.postgis',
+#         'NAME': DATABASE_CRADENTIAL['DB_NAME'],
+#         'USER': DATABASE_CRADENTIAL['DB_USER'],
+#         'PASSWORD': DATABASE_CRADENTIAL.get('DB_PASSWORD'),
+#         'HOST': DATABASE_CRADENTIAL['DB_HOST'],
+#         'PORT': DATABASE_CRADENTIAL['DB_PORT'],
+#     }
+# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.contrib.gis.db.backends.postgis',
-        'NAME': DATABASE_CRADENTIAL['DB_NAME'],
-        'USER': DATABASE_CRADENTIAL['DB_USER'],
-        'PASSWORD': DATABASE_CRADENTIAL.get('DB_PASSWORD'),
-        'HOST': DATABASE_CRADENTIAL['DB_HOST'],
-        'PORT': DATABASE_CRADENTIAL['DB_PORT'],
+        'ENGINE': 'django.contrib.gis.db.backends.spatialite',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
 

@@ -102,7 +102,7 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
 
     # Authentication field (must be set dynamically)
     USERNAME_FIELD = 'username'  # Default to email
-    REQUIRED_FIELDS = ['name']
+    REQUIRED_FIELDS = ['name', 'email']
 
     class Meta:
         constraints = [
